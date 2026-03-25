@@ -45,12 +45,19 @@ All commit messages **MUST** follow the Conventional Commits specification. This
 ### Required Format:
 
 ```
-<type>: <description>
+<type>: <subject line - max 70 characters>
 
-[optional body]
+
+[mandatory detailed body - explain WHY and HOW]
 
 [optional footer]
 ```
+
+**CRITICAL REQUIREMENTS**:
+- First line (subject): **MUST** be maximum 70 characters
+- **MUST** have exactly TWO blank lines after subject line
+- Body: **MUST** provide detailed explanation of changes
+- All commit messages **MUST** be written in **ENGLISH**
 
 ### Valid Commit Types:
 - `feat:` - new feature
@@ -65,11 +72,30 @@ All commit messages **MUST** follow the Conventional Commits specification. This
 ### Examples of CORRECT commits:
 ```
 feat: add user login endpoint
+
+
+Implement POST /api/auth/login endpoint with JWT token generation.
+Includes email/password validation and rate limiting.
+
+Closes #123
+```
+
+```
 fix: resolve null pointer exception in data parser
+
+
+The parser was not handling empty input strings correctly, causing
+NPE when processing malformed JSON. Added null checks and proper
+error handling with descriptive error messages.
+```
+
+```
 refactor: extract validation logic into separate module
-test: add integration tests for payment gateway
-docs: update API documentation for authentication
-chore: upgrade dependencies to latest versions
+
+
+Moved user input validation from controller to dedicated validator
+class to improve code reusability and testability. No functional
+changes to validation behavior.
 ```
 
 ### **STRICTLY PROHIBITED** commit messages:
@@ -79,8 +105,12 @@ chore: upgrade dependencies to latest versions
 - ❌ `wip`
 - ❌ `test commit`
 - ❌ Any commit without a conventional commit prefix
+- ❌ Subject line longer than 70 characters
+- ❌ Missing two blank lines after subject
+- ❌ Missing detailed body explanation
+- ❌ Commits in languages other than English
 
-**FORBIDDEN**: Creating commits without proper type prefixes or with vague descriptions.
+**FORBIDDEN**: Creating commits without proper type prefixes, vague descriptions, missing body, or incorrect formatting.
 
 ---
 
@@ -137,16 +167,20 @@ Before creating any commit, AI agents **MUST** perform the following checks:
 
 ## 5. Commit Message Best Practices
 
-### Description Requirements:
+### Subject Line Requirements:
 - **MUST** be written in imperative mood ("add feature" not "added feature")
-- **MUST** be concise but descriptive
+- **MUST** be maximum 70 characters
 - **MUST** start with lowercase letter (after the type prefix)
 - **MUST NOT** end with a period
+- **MUST** be written in **ENGLISH**
 
-### Body (Optional but Recommended):
-- Use when the change requires explanation
-- Explain **WHY** the change was made, not **WHAT** (the diff shows what)
-- Wrap at 72 characters
+### Body Requirements (MANDATORY):
+- **MUST** be separated from subject by exactly TWO blank lines
+- **MUST** explain **WHY** the change was made and **HOW** it works
+- **MUST** provide context and reasoning
+- **MUST** wrap at 72 characters per line
+- **MUST** be written in **ENGLISH**
+- The diff shows WHAT changed; the body explains WHY and HOW
 
 ### Footer (Optional):
 - Reference issue numbers: `Closes #123`
