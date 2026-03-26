@@ -1,1 +1,32 @@
-###space for local LLM docker container
+version: '3.8'
+
+x-ollama-base: &ollama-base
+  image: ollama/ollama:latest
+  volumes:
+    - ./ollama_data:/root/.ollama
+  ports:
+    - "11434:11434"
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  qwen:
+    <<: *ollama-base
+    container_name: llm_qwen
+    profiles: ["qwen"]
+
+  gemma:
+    <<: *ollama-base
+    container_name: llm_gemma
+    profiles: ["gemma"]
+
+  llama:
+    <<: *ollama-base
+    container_name: llm_llama
+    profiles: ["llama"]
+    
