@@ -34,6 +34,11 @@ esac
 echo "Stopping any running models..."
 docker compose down
 
+docker stop llm_qwen llm_gemma llm_llama 2>/dev/null || true
+docker rm llm_qwen llm_gemma llm_llama 2>/dev/null || true
+
+sleep 2
+
 echo "Starting environment for: $MODEL_CHOICE..."
 docker compose --profile $PROFILE up -d
 
