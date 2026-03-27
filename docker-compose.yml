@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-ollama-base: &ollama-base
   image: ollama/ollama:latest
   volumes:
