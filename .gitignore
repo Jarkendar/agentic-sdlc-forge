@@ -210,3 +210,6 @@ __marimo__/
 
 # Ollama
 ollama_data/
+
+# Open WebUI
+open_webui_data/
