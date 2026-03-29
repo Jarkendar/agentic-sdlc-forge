@@ -1,3 +1,8 @@
+x-ollama-env: &ollama-env
+  OLLAMA_FLASH_ATTENTION: "1"    # faster inference, lower VRAM usage
+  OLLAMA_KV_CACHE_TYPE: "q8_0"  # ~50% KV cache VRAM savings (needs flash attn)
+  OLLAMA_NUM_PARALLEL: "1"      # prevent context multiplication on large ctx
+
 x-ollama-base: &ollama-base
   image: ollama/ollama:latest
   volumes:
@@ -17,14 +22,37 @@ services:
     <<: *ollama-base
     container_name: llm_qwen
     profiles: ["qwen"]
+    environment:
+      <<: *ollama-env
+      OLLAMA_NUM_CTX: "131072"   # qwen2.5-coder:7b → 128k tokens
 
   gemma:
     <<: *ollama-base
     container_name: llm_gemma
     profiles: ["gemma"]
+    environment:
+      <<: *ollama-env
+      OLLAMA_NUM_CTX: "131072"   # gemma3:27b → 128k tokens
 
   llama:
     <<: *ollama-base
     container_name: llm_llama
     profiles: ["llama"]
-    
+    environment:
+      <<: *ollama-env
+      OLLAMA_NUM_CTX: "131072"   # llama3.1:8b → 128k tokens
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: llm_webui
+    profiles: ["gui"]
+    ports:
+      - "3000:8080"
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      WEBUI_AUTH: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./open_webui_data:/app/backend/data
+    restart: unless-stopped
