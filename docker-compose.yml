@@ -26,13 +26,21 @@ services:
       <<: *ollama-env
       OLLAMA_NUM_CTX: "131072"   # qwen2.5-coder:7b → 128k tokens
 
-  gemma:
+  gemma4:
     <<: *ollama-base
-    container_name: llm_gemma
-    profiles: ["gemma"]
+    container_name: llm_gemma4
+    profiles: ["gemma4"]
     environment:
       <<: *ollama-env
-      OLLAMA_NUM_CTX: "131072"   # gemma3:27b → 128k tokens
+      OLLAMA_NUM_CTX: "131072"   # gemma4:e4b → 128k tokens
+
+  gemma4-26b:
+    <<: *ollama-base
+    container_name: llm_gemma4_26b
+    profiles: ["gemma4-26b"]
+    environment:
+      <<: *ollama-env
+      OLLAMA_NUM_CTX: "131072"   # gemma4:26b → 128k (supports 256k, limited for VRAM)
 
   llama:
     <<: *ollama-base

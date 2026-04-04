@@ -13,7 +13,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "Error: Unknown option '$1'."
-      echo "Usage: ./start_llm.sh [--gui|-g] [qwen | gemma | llama]"
+      echo "Usage: ./start_llm.sh [--gui|-g] [qwen | gemma | gemma4 | gemma4-26b | llama]"
       exit 1
       ;;
     *)
@@ -25,7 +25,7 @@ done
 
 if [ -z "$MODEL_CHOICE" ]; then
   echo "Error: No model specified."
-  echo "Usage: ./start_llm.sh [--gui|-g] [qwen | gemma | llama]"
+  echo "Usage: ./start_llm.sh [--gui|-g] [qwen | gemma | gemma4 | gemma4-26b | llama]"
   echo ""
   echo "Options:"
   echo "  --gui, -g    Launch Open WebUI in browser (http://localhost:3000)"
@@ -43,6 +43,16 @@ case $MODEL_CHOICE in
     CONTAINER="llm_gemma"
     OLLAMA_MODEL="gemma3:27b"
     ;;
+  gemma4)
+    PROFILE="gemma4"
+    CONTAINER="llm_gemma4"
+    OLLAMA_MODEL="gemma4:e4b"
+    ;;
+  gemma4-26b)
+    PROFILE="gemma4-26b"
+    CONTAINER="llm_gemma4_26b"
+    OLLAMA_MODEL="gemma4:26b"
+    ;;
   llama)
     PROFILE="llama"
     CONTAINER="llm_llama"
@@ -50,7 +60,7 @@ case $MODEL_CHOICE in
     ;;
   *)
     echo "Error: Unknown model '$MODEL_CHOICE'."
-    echo "Available options: qwen, gemma, llama"
+    echo "Available options: qwen, gemma, gemma4, gemma4-26b, llama"
     exit 1
     ;;
 esac
@@ -58,8 +68,8 @@ esac
 echo "Stopping any running models..."
 docker compose down --remove-orphans
 
-docker stop llm_qwen llm_gemma llm_llama llm_webui 2>/dev/null || true
-docker rm llm_qwen llm_gemma llm_llama llm_webui 2>/dev/null || true
+docker stop llm_qwen llm_gemma llm_gemma4 llm_gemma4_26b llm_llama llm_webui 2>/dev/null || true
+docker rm llm_qwen llm_gemma llm_gemma4 llm_gemma4_26b llm_llama llm_webui 2>/dev/null || true
 
 sleep 2
 
