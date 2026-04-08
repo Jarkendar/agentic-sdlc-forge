@@ -5,6 +5,7 @@ x-ollama-env: &ollama-env
 
 x-ollama-base: &ollama-base
   image: ollama/ollama:latest
+  pull_policy: always 
   volumes:
     - ./ollama_data:/root/.ollama
   ports:
