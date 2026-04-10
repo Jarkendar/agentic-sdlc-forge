@@ -4,7 +4,7 @@ x-ollama-env: &ollama-env
   OLLAMA_NUM_PARALLEL: "1"      # prevent context multiplication on large ctx
 
 x-ollama-base: &ollama-base
-  image: ollama/ollama:latest
+  image: ollama/ollama:0.20.5
   pull_policy: always 
   volumes:
     - ./ollama_data:/root/.ollama
