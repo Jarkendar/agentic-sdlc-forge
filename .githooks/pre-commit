@@ -11,9 +11,17 @@ NC='\033[0m' # No Color
 # 1. Regex pattern for email addresses
 REGEX_EMAIL="[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
 
-# 2. Universal regex pattern for passwords, tokens, and API keys.
-# Detects keywords before a colon (:) or equals sign (=)
-REGEX_SECRETS="(password|secret|api_?key|token|credential)[a-zA-Z0-9_-]*[\"']?\s*[:=]\s*[\"']?[a-zA-Z0-9\-_=+]{5,}[\"']?"
+# 2. Regex pattern for passwords, tokens, and API keys.
+# Matches a trigger word followed by `:` or `=`, then either:
+#   (a) a quoted string of 5+ characters — typical hardcoded secret, OR
+#   (b) an unquoted alphanumeric string of 16+ characters — covers JWTs,
+#       GitHub PATs, OpenAI keys, AWS keys, base64 tokens, etc.
+#
+# The 16-char threshold for unquoted values prevents false positives on
+# Python keyword arguments (e.g. `tokens_in=tokens_in`) and short
+# identifiers, while still catching every realistic secret format —
+# every common secret type is far longer than 16 characters.
+REGEX_SECRETS="(password|secret|api_?key|token|credential)[a-zA-Z0-9_-]*[\"']?\s*[:=]\s*[\"'][^\"']{5,}[\"']|(password|secret|api_?key|token|credential)[a-zA-Z0-9_-]*[\"']?\s*[:=]\s*[a-zA-Z0-9_+/=-]{16,}"
 
 # Get ALL files scheduled for commit (excluding deleted ones)
 FILES=$(git diff --cached --name-only --diff-filter=ACM)
