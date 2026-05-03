@@ -43,12 +43,86 @@
 4. **Hard limits on retries** prevent budget runaway: max 3 retries per task, max 10 retries per run.
 5. **Orchestrator never makes semantic decisions.** If a routing decision requires understanding code, that decision belongs to a strong-model persona.
 
-### 0.5 Open questions (resolve before relevant stage)
+### 0.5 Open questions (resolved — see 0.6 for outcomes)
 
-- [ ] **API keys / model config** — env vars vs config file vs both? (decide before Stage 4)
-- [ ] **Aider invocation** — call `aider --message` per task, or keep one Aider session alive across tasks? (decide before Stage 5)
-- [ ] **Parallel task execution** — sequential MVP, or allow non-conflicting tasks in parallel? (decide before Stage 6 — recommend sequential for v1)
-- [ ] **Cost tracking** — track tokens per agent and surface in Reporter? (recommend yes from day 1)
+- [x] **API keys / model config** — env vars vs config file vs both? → see 0.6.1
+- [x] **Aider invocation** — call `aider --message` per task, or keep one Aider session alive across tasks? → see 0.6.2
+- [x] **Parallel task execution** — sequential MVP, or allow non-conflicting tasks in parallel? → see 0.6.3
+- [x] **Cost tracking** — track tokens per agent and surface in Reporter? → see 0.6.4
+
+### 0.6 Resolved decisions
+
+#### 0.6.1 API keys / model config — **hybrid: env for secrets, TOML for config**
+
+- Secrets (API keys) live in `.env` (already covered by `.gitignore`).
+- Per-persona model assignments and runtime limits live in `.forge/config.toml` (commitable, no secrets).
+- A `.forge/config.example.toml` ships in the repo as a template.
+
+Reference shape:
+
+```toml
+# .forge/config.toml
+[models.orchestrator]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+[models.planner]
+provider = "anthropic"
+model = "claude-opus-4-7"
+
+[models.executor]
+provider = "ollama"
+model = "qwen2.5-coder:7b"
+base_url = "http://localhost:11434"
+
+[models.verifier]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[models.reporter]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[limits]
+max_retries_per_task = 3
+max_retries_per_run = 10
+task_timeout_seconds = 600
+```
+
+```bash
+# .env (gitignored)
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Rationale:** swapping a model is a one-line TOML edit; secrets never leak into git; the existing `.githooks/pre-commit` enforces the boundary.
+
+#### 0.6.2 Aider invocation — **per-task subprocess**
+
+Each task spawns a fresh `aider` subprocess and exits when the task ends. No persistent session in MVP.
+
+**Why:**
+- **Isolation** — fresh context per task; Aider cannot cross-contaminate task A's reasoning into task B.
+- **Crash safety** — a failing Aider kills one task, not the whole run.
+- **Debuggability** — clean 1:1 mapping between `task_id` and a single stdout/stderr stream in the event log.
+- **Resumability** — kill mid-run, restart, continue from the next task without rebuilding session state.
+
+**Cost:** ~1–2s startup overhead per task (process spawn + repo re-index). Negligible vs. generation time. Persistent session is reconsidered in Stage 9 only if this overhead becomes painful.
+
+#### 0.6.3 Parallel task execution — **sequential in MVP**
+
+Tasks run one at a time. Parallel execution is deferred to Stage 9 because it requires:
+
+- git worktree per task (otherwise concurrent commits race on the branch),
+- a conflict analyzer in Planner (declared-independent tasks may still both touch `build.gradle`, shared imports, etc.),
+- per-task verification scoping (otherwise a failing test cannot be attributed to a specific task).
+
+That is a separate body of work, not a switch to flip.
+
+#### 0.6.4 Cost tracking — **enabled from Stage 1**
+
+Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `duration_ms`. Cost is computed inside `LLMClient` from a static price table at `forge/pricing.py`. Reporter aggregates `cost_usd` by `agent`.
+
+**Why now, not later:** the data is already returned by every provider's API; capturing it costs ~5 lines of code. Backfilling cost into historical runs is impossible. Without per-agent cost data, the "weak vs. strong models per persona" architecture has no measurable basis.
 
 ---
 
@@ -65,20 +139,31 @@
   - `ExecutionResult` — `task_id`, `status: Literal["success","failed","skipped"]`, `aider_stdout`, `aider_stderr`, `files_changed: list[Path]`
   - `TestReport` — `task_id`, `passed: bool`, `failures: list[Failure]`, `severity: Literal["critical","warning","flaky"]`
   - `RunState` — full run snapshot (current task, completed tasks, retry counts, status)
+  - `Event` — `run_id`, `timestamp`, `agent`, `phase`, `duration_ms`, `tokens_in`, `tokens_out`, `cost_usd`, `payload` (per decision 0.6.4 — cost fields are first-class from day 1)
 - [ ] Implement `forge/event_log.py`:
   - `EventLog` class, append-only JSONL writer
-  - `log(agent, phase, payload, **metadata)` — auto-adds `run_id`, `timestamp`, `tokens_in/out`, `duration_ms`
+  - `log(agent, phase, payload, **metadata)` — auto-adds `run_id`, `timestamp`, `tokens_in/out`, `duration_ms`, `cost_usd`
   - `fsync` after every write (crash-safety)
   - Reader helper: `EventLog.read_run(run_id) -> Iterator[Event]`
 - [ ] Implement `forge/state.py`:
   - `RunState.load(run_id)` / `RunState.save()` — JSON file at `.forge/runs/<run_id>/state.json`
   - State transitions are explicit methods (`mark_task_complete`, `increment_retry`, etc.) — no raw field mutation
+- [ ] Implement `forge/config.py` (per decision 0.6.1):
+  - Load `.forge/config.toml` (model assignments + limits) and `.env` (API keys via `python-dotenv` or `os.environ`)
+  - Pydantic-validated config schema; fail fast on missing required fields
+  - Ship `.forge/config.example.toml` as a template
+- [ ] Implement `forge/pricing.py` (per decision 0.6.4):
+  - Static price table: `{provider: {model: {input_per_1k_usd, output_per_1k_usd}}}`
+  - `cost_for(provider, model, tokens_in, tokens_out) -> float` helper used by `LLMClient` in Stage 3
+  - Unit test that all models referenced in `config.example.toml` exist in the price table
 
 ### 1.2 Definition of Done
 
 - Unit tests for schemas (round-trip serialization)
 - Unit tests for `EventLog` (concurrent writes, crash recovery — kill process mid-write, verify last complete event survives)
 - `RunState` can be saved, killed, reloaded, resumed
+- `forge/config.py` loads `config.example.toml` + a fake `.env` and validates; missing API key for a configured provider fails loudly
+- `forge/pricing.py` returns correct cost for a known (provider, model) pair; raises on unknown model
 - `pytest` green, `ruff` clean
 
 ### 1.3 What can go wrong
@@ -284,4 +369,4 @@
 
 ---
 
-*Last updated: maintain this date manually as the plan evolves.*
+*Last updated: 2026-05-03 — resolved open questions 0.5 → 0.6, extended Stage 1 with config + pricing.*
