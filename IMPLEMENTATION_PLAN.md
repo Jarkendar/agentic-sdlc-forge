@@ -132,28 +132,28 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 1.1 Tasks
 
-- [ ] Create `forge/` Python package (project root or under `src/`, decide once)
-- [ ] Define pydantic schemas in `forge/schemas.py`:
+- [x] Create `forge/` Python package (project root or under `src/`, decide once)
+- [x] Define pydantic schemas in `forge/schemas.py`:
   - `Task` — `id`, `goal`, `files: list[Path]`, `acceptance_criteria: list[str]`, `depends_on: list[str]`
   - `Plan` — `run_id`, `user_story`, `tasks: list[Task]`, `created_at`
   - `ExecutionResult` — `task_id`, `status: Literal["success","failed","skipped"]`, `aider_stdout`, `aider_stderr`, `files_changed: list[Path]`
   - `TestReport` — `task_id`, `passed: bool`, `failures: list[Failure]`, `severity: Literal["critical","warning","flaky"]`
   - `RunState` — full run snapshot (current task, completed tasks, retry counts, status)
   - `Event` — `run_id`, `timestamp`, `agent`, `phase`, `duration_ms`, `tokens_in`, `tokens_out`, `cost_usd`, `payload` (per decision 0.6.4 — cost fields are first-class from day 1)
-- [ ] Implement `forge/event_log.py`:
+- [x] Implement `forge/event_log.py`:
   - `EventLog` class, append-only JSONL writer
   - `log(agent, phase, payload, **metadata)` — auto-adds `run_id`, `timestamp`, `tokens_in/out`, `duration_ms`, `cost_usd`
   - `fsync` after every write (crash-safety)
   - Reader helper: `EventLog.read_run(run_id) -> Iterator[Event]`
-- [ ] Implement `forge/state.py`:
+- [x] Implement `forge/state.py`:
   - `RunState.load(run_id)` / `RunState.save()` — JSON file at `.forge/runs/<run_id>/state.json`
   - State transitions are explicit methods (`mark_task_complete`, `increment_retry`, etc.) — no raw field mutation
-- [ ] Implement `forge/config.py` (per decision 0.6.1):
+- [x] Implement `forge/config.py` (per decision 0.6.1):
   - Load `.forge/config.toml` (model assignments + limits) and `.env` (API keys via `python-dotenv` or `os.environ`)
   - Pydantic-validated config schema; fail fast on missing required fields
   - Ship `.forge/config.example.toml` as a template
-- [ ] Implement `forge/pricing.py` (per decision 0.6.4):
-  - Static price table: `{provider: {model: {input_per_1k_usd, output_per_1k_usd}}}`
+- [x] Implement `forge/pricing.py` (per decision 0.6.4):
+  - Static price table: `{provider: {model: {input_per_1m_usd, output_per_1m_usd}}}`
   - `cost_for(provider, model, tokens_in, tokens_out) -> float` helper used by `LLMClient` in Stage 3
   - Unit test that all models referenced in `config.example.toml` exist in the price table
 
