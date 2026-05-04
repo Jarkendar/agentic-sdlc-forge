@@ -1,0 +1,48 @@
+# Forge runtime config — copy to .forge/config.toml and edit.
+#
+# This file commits to git. Secrets (API keys) live in .env, NOT here.
+# See IMPLEMENTATION_PLAN §0.6.1 for the rationale.
+#
+# Every persona must have a [models.<name>] section. The five personas
+# are: orchestrator, planner, executor, verifier, reporter.
+# Each (provider, model) pair must exist in forge/pricing.py — typos
+# fail at config load, not mid-run.
+
+# State router. Pure routing, no semantic judgment — weak model is fine
+# and cheaper. See IMPLEMENTATION_PLAN §0.3.
+[models.orchestrator]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+# Decomposes user stories into atomic tasks. Quality here drives the
+# whole pipeline — use the strongest model you can afford.
+[models.planner]
+provider = "anthropic"
+model = "claude-opus-4-7"
+
+# Per-task Aider dispatcher. Mostly templated; the actual code generation
+# happens inside Aider, so weak/local model is enough for the dispatch
+# logic. Ollama keeps the inner loop free during heavy iteration.
+[models.executor]
+provider = "ollama"
+model = "qwen2.5-coder:7b"
+base_url = "http://localhost:11434"
+
+# Failure triage and severity classification. NEVER downgrade this to
+# the orchestrator's weak model — see "Key learnings" in the plan.
+[models.verifier]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+# Final run summary for humans. Read-the-event-log + write-markdown;
+# Sonnet is the right cost/quality balance.
+[models.reporter]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+# Hard caps that prevent runaway token spend in fix loops.
+# See IMPLEMENTATION_PLAN §0.4 — these are non-negotiable.
+[limits]
+max_retries_per_task = 3
+max_retries_per_run = 10
+task_timeout_seconds = 600
