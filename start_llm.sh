@@ -36,12 +36,7 @@ case $MODEL_CHOICE in
   qwen)
     PROFILE="qwen"
     CONTAINER="llm_qwen"
-    OLLAMA_MODEL="qwen2.5-coder:7b"
-    ;;
-  gemma)
-    PROFILE="gemma"
-    CONTAINER="llm_gemma"
-    OLLAMA_MODEL="gemma3:27b"
+    OLLAMA_MODEL="qwen3:8b"
     ;;
   gemma4)
     PROFILE="gemma4"
@@ -56,7 +51,7 @@ case $MODEL_CHOICE in
   llama)
     PROFILE="llama"
     CONTAINER="llm_llama"
-    OLLAMA_MODEL="llama3.1:8b"
+    OLLAMA_MODEL="llama3.3:8b"
     ;;
   *)
     echo "Error: Unknown model '$MODEL_CHOICE'."
