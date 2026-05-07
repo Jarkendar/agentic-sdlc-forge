@@ -13,6 +13,7 @@ here without the config loader.
 from __future__ import annotations
 
 import pytest
+
 from forge.pricing import PRICING, PriceEntry, cost_for, known_models
 
 # ---------- cost_for: math ----------

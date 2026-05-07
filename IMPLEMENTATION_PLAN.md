@@ -179,13 +179,13 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 2.1 Tasks
 
-- [ ] Create `.forge/personas/` directory
-- [ ] Write `orchestrator.md` — system prompt for state routing. Output schema: `{"next_action": "...", "reasoning": "..."}`. Include the legal state machine (PLANNING → EXECUTING → VERIFYING → FIX_LOOP | NEXT_TASK | DONE) directly in the prompt.
-- [ ] Write `planner.md` — system prompt that produces a `Plan`. Include atomicity rules ("one file, one purpose, ≤200 lines of change, testable in isolation"). Reference `architecture_map.md` and `git_flow.md` as required reading.
-- [ ] Write `executor.md` — system prompt that takes a `Task` and produces an Aider invocation (which files to `/add`, what message to send). For MVP this can be a deterministic template; the LLM-driven version is Stage 5b.
-- [ ] Write `verifier.md` — system prompt that reads test/lint/build output and returns a `TestReport` with severity classification. Include severity criteria explicitly ("CRITICAL = compilation error or test failure on touched code; WARNING = lint or unrelated flake; FLAKY = test passed on retry").
-- [ ] Write `reporter.md` — system prompt that reads `events.jsonl` and produces a markdown summary for humans.
-- [ ] `forge/personas.py` — loader that reads prompt files, supports variable interpolation (`{{architecture_map}}`, `{{file_tree}}`)
+- [x] Create `.forge/personas/` directory
+- [x] Write `orchestrator.md` — system prompt for state routing. Output schema: `{"next_action": "...", "reasoning": "..."}`. Include the legal state machine (PLANNING → EXECUTING → VERIFYING → FIX_LOOP | NEXT_TASK | DONE) directly in the prompt.
+- [x] Write `planner.md` — system prompt that produces a `Plan`. Include atomicity rules ("one file, one purpose, ≤200 lines of change, testable in isolation"). Reference `architecture_map.md` and `git_flow.md` as required reading.
+- [x] Write `executor.md` — system prompt that takes a `Task` and produces an Aider invocation (which files to `/add`, what message to send). For MVP this can be a deterministic template; the LLM-driven version is Stage 5b.
+- [x] Write `verifier.md` — system prompt that reads test/lint/build output and returns a `TestReport` with severity classification. Include severity criteria explicitly ("CRITICAL = compilation error or test failure on touched code; WARNING = lint or unrelated flake; FLAKY = test passed on retry").
+- [x] Write `reporter.md` — system prompt that reads `events.jsonl` and produces a markdown summary for humans.
+- [x] `forge/personas.py` — loader that reads prompt files, supports variable interpolation (`{{architecture_map}}`, `{{file_tree}}`)
 
 ### 2.2 Definition of Done
 
@@ -205,13 +205,13 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 3.1 Tasks
 
-- [ ] `forge/llm.py` — abstract `LLMClient` with `complete(prompt, schema=None) -> Response`
-- [ ] Two implementations:
+- [x] `forge/llm.py` — abstract `LLMClient` with `complete(prompt, schema=None) -> Response`
+- [x] Two implementations:
   - `AnthropicClient` (Haiku, Sonnet, Opus)
   - `OllamaClient` (uses local Docker setup) — for Executor in offline mode and for cheap dev
-- [ ] Structured output support — when `schema` is passed, validate response against pydantic schema, retry once on validation failure with the validation error appended to the prompt
-- [ ] Token + duration accounting — return alongside response, EventLog consumes it
-- [ ] Config: `forge/config.py` reads `.forge/config.toml` for model assignments per persona, env vars for API keys
+- [x] Structured output support — when `schema` is passed, validate response against pydantic schema, retry once on validation failure with the validation error appended to the prompt
+- [x] Token + duration accounting — return alongside response, EventLog consumes it
+- [x] Config: `forge/config.py` reads `.forge/config.toml` for model assignments per persona, env vars for API keys
 
 ### 3.2 Definition of Done
 
