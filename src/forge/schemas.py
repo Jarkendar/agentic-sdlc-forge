@@ -159,6 +159,63 @@ class TestReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# OrchestratorDecision — produced by the Orchestrator each routing turn
+# ---------------------------------------------------------------------------
+
+
+#: The closed set of actions the Orchestrator may emit. These are *actions*
+#: (what to do next), not *states* (where we are) — the latter live in
+#: RunStatus below. Kept as a Literal rather than a StrEnum because these
+#: values exist only in the prompt/contract surface; they are not persisted
+#: across runs and don't need StrEnum's serialization affordances.
+#:
+#: Mirrors the "Decision" column of the decision table in
+#: .forge/personas/orchestrator.md plus "PLAN" as the run-start action.
+#: Keep both in sync — drift here means the Orchestrator can emit a value
+#: the runtime cannot route on, or vice versa.
+OrchestratorAction = Literal[
+    "PLAN",
+    "EXECUTE",
+    "VERIFY",
+    "FIX_LOOP",
+    "NEXT_TASK",
+    "ESCALATE",
+    "DONE",
+]
+
+
+class OrchestratorDecision(BaseModel):
+    """One routing decision from the Orchestrator.
+
+    The Orchestrator runs on a cheap model and only picks the next action.
+    Semantic classification (is this failure flaky? is this test critical?)
+    is the Verifier's job and must not bleed into this schema — see
+    `.forge/personas/orchestrator.md` "Hard rules" §3.
+
+    The runtime is also responsible for validating that `next_action` is
+    actually in the `legal_actions` list it provided to the prompt; this
+    schema only enforces "one of the universe of actions", not "one of the
+    actions legal in this turn". The narrower check happens at call site
+    so a bad decision can be logged with full context (what was legal,
+    what the model picked, why).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    next_action: OrchestratorAction = Field(
+        description="The action to route to. Must come from the prompt's `legal_actions` list."
+    )
+    reasoning: str = Field(
+        min_length=1,
+        max_length=300,
+        description=(
+            "One sentence (≤30 words by prompt rule, capped at 300 chars here as a "
+            "defensive ceiling) referencing the input that drove the decision."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # RunState — persisted snapshot at .forge/runs/<run_id>/state.json
 # ---------------------------------------------------------------------------
 

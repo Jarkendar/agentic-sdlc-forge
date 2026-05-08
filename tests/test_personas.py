@@ -25,7 +25,7 @@ from forge.personas import (
 # Real persona files — contract tests
 # ---------------------------------------------------------------------------
 
-PERSONAS_DIR = Path(__file__).parent.parent / "personas"
+PERSONAS_DIR = Path(__file__).parent.parent / ".forge" / "personas"
 
 
 @pytest.fixture(scope="module")
