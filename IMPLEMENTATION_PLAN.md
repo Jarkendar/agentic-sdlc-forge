@@ -215,9 +215,10 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 3.2 Definition of Done
 
-- Both clients return same `Response` shape
-- Schema validation + retry tested with a deliberately broken mock response
-- Switching a persona's model is a single config edit
+- ✅ Both clients return same `LLMResponse` shape
+- ✅ Schema validation + retry tested (Anthropic: `test_validation_retries_once_on_invalid_first_response`, Ollama: `test_structured_validation_retries_once_on_bad_json`)
+- ✅ Switching a persona's model is a single config edit (`get_client()` reads from `ForgeConfig.models[persona]`)
+- ✅ 32 tests passing, ruff clean
 
 ### 3.3 What can go wrong
 
@@ -231,9 +232,9 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 4.1 Tasks
 
-- [ ] `forge/agents/planner.py` — takes user story + paths to KB files + file tree, returns validated `Plan`
-- [ ] CLI entry point: `forge plan "user story here"` — outputs the plan as JSON and as human-readable markdown
-- [ ] Logs to EventLog throughout
+- [x] `forge/agents/planner.py` — takes user story + paths to KB files + file tree, returns validated `Plan`
+- [x] CLI entry point: `forge plan "user story here"` — outputs the plan as JSON and as human-readable markdown
+- [x] Logs to EventLog throughout
 
 ### 4.2 Definition of Done
 

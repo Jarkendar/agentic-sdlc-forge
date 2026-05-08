@@ -48,6 +48,7 @@ class Event(BaseModel):
     tokens_in: int | None = None
     tokens_out: int | None = None
     duration_ms: int | None = None
+    cost_usd: float | None = None
 
 
 class EventLog:
@@ -75,11 +76,16 @@ class EventLog:
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         duration_ms: int | None = None,
+        cost_usd: float | None = None,
     ) -> None:
         """Append one event. Flushes and fsyncs before returning.
 
         `payload` accepts either a dict or any pydantic model — the model is
         dumped via model_dump(mode='json') so Path/datetime/Enum survive.
+
+        `cost_usd` is top-level rather than buried in payload so the Reporter
+        (Stage 7) can aggregate per-run / per-persona cost with a uniform
+        `event.cost_usd` access path, without per-agent payload schemas.
         """
         if isinstance(payload, BaseModel):
             payload_dict = payload.model_dump(mode="json")
@@ -95,6 +101,7 @@ class EventLog:
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             duration_ms=duration_ms,
+            cost_usd=cost_usd,
         )
 
         # model_dump_json gives us a single JSON object on one line.

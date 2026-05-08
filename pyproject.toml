@@ -23,8 +23,8 @@ dev = [
 ]
 
 # Future CLI entry point — wired up in Stage 8
-# [project.scripts]
-# forge = "forge.cli:main"
+[project.scripts]
+forge = "forge.cli:main"
 
 [build-system]
 requires = ["hatchling"]

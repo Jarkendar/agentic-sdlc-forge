@@ -27,8 +27,9 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import find_dotenv, load_dotenv
-from forge.pricing import known_models
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from forge.pricing import known_models
 
 # ---------------------------------------------------------------------------
 # Persona names — locked by IMPLEMENTATION_PLAN §0.3

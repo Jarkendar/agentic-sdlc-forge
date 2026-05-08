@@ -45,15 +45,27 @@ def test_log_round_trip(tmp_path: Path) -> None:
             tokens_in=50,
             tokens_out=300,
             duration_ms=1500,
+            cost_usd=0.0042,
         )
 
     events = list(EventLog.read(log_file))
     assert len(events) == 2
     assert events[0].agent == "planner"
     assert events[0].phase == "start"
+    assert events[0].cost_usd is None
     assert events[1].payload == {"task_id": "t1", "status": "ok"}
     assert events[1].tokens_in == 50
     assert events[1].duration_ms == 1500
+    assert events[1].cost_usd == pytest.approx(0.0042)
+
+
+def test_log_cost_usd_defaults_to_none(tmp_path: Path) -> None:
+    """Events without an LLM call (e.g. planner/start) must omit cost cleanly."""
+    log_file = tmp_path / "events.jsonl"
+    with EventLog(log_file) as log:
+        log.log(agent="planner", phase="start", run_id="r1")
+    [event] = list(EventLog.read(log_file))
+    assert event.cost_usd is None
 
 
 def test_log_accepts_pydantic_model_as_payload(tmp_path: Path) -> None:
