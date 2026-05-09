@@ -253,23 +253,30 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 5.1 Tasks
 
-- [ ] `forge/agents/executor.py` — takes a `Task`, builds an Aider invocation
-- [ ] `forge/aider_runner.py` — subprocess wrapper around `aider --message ... --yes --no-stream <files>`. Captures stdout/stderr, parses Aider's reported file changes, returns `ExecutionResult`
-- [ ] **Decide first** (open question 0.5): per-task subprocess vs. persistent session. Recommendation for MVP: per-task subprocess. Simpler, isolated, easier to debug. Persistent session is a Stage 9+ optimization.
-- [ ] CLI: `forge execute <task_id>` (loads plan, runs one task)
+- [x] `forge/agents/executor.py` — takes a `Task`, orchestrates aider + git ops, returns `ExecutionResult`. Deterministic (no LLM call); persona file is the human-readable contract, the module is the executable version.
+- [x] `forge/aider_runner.py` — subprocess wrapper around `aider --message ... --yes --no-stream <files>`. Captures stdout/stderr, enforces 600s timeout via `start_new_session=True` + `os.killpg(SIGKILL)` for the whole process group (Linux-first; Windows path is future work).
+- [x] `forge/git_ops.py` — owns all git operations: `ensure_clean_worktree`, `ensure_run_branch` (idempotent), `create_task_branch`, `current_head_sha`, `diff_files_since`, `squash_task_commits`, `merge_task_into_run`, plus `OutOfScopeEdit` detection. Stage 7's Orchestrator will reuse these primitives.
+- [x] **Decided** (open question 0.5): per-task subprocess vs. persistent session. **Per-task subprocess** in MVP. Simpler, isolated, easier to debug. Persistent session is a Stage 9+ optimization.
+- [x] **Per-task branch model.** Each task runs on `forge/task/<run_id>/<task_id>` branched from `forge/run/<run_id>` tip. On `success` the task branch is squashed into one conventional commit (with `forge-task-id:` / `forge-run-id:` footer) and merged via `git merge --no-ff` into the run branch. On `failed` / `no_changes` / out-of-scope the task branch is preserved as-is for inspection — no squash, no merge. End-of-task invariant: HEAD is on the run branch regardless of status.
+- [x] **External aider binary** (D9). `aider` must be on `PATH` — runtime fails fast at construction with `AiderNotFoundError`. Pinning the version in pyproject would couple us to upstream CLI changes.
+- [x] **Conventional commit type heuristic.** First word of `task.goal` maps to `feat` / `fix` / `refactor` / `test` / `docs` / `chore`, with `chore` as fallback. Replacing this with an explicit `commit_type` field on `Task` is tracked in Stage 9.
+- [x] CLI: `forge execute <task_id> --plan plan.json [--repo .]` — loads plan from disk, runs one task, prints `ExecutionResult` JSON to stdout. Exit codes: `0` success, `1` pre-flight error, `2` task failed/no_changes.
+- [x] `run_id` for `forge execute` comes from `plan.run_id`, not regenerated. Events append to `.forge/runs/<plan.run_id>/events.jsonl`, keeping planning + executions in one trail.
 
 ### 5.2 Definition of Done
 
-- Run Executor against 3 tasks from a real Plan
-- Files actually change on disk
-- `git diff` is sensible
-- EventLog captures full Aider stdout/stderr
+- [x] Run Executor against tasks from a real Plan (covered by 32 unit tests using fake AiderRunner + real tmp git repos)
+- [x] Files actually change on disk (verified in tests)
+- [x] `git diff` is sensible — `--no-ff` merge commits visible on run branch, squashed conventional commits on task branches
+- [x] EventLog captures full Aider stdout/stderr (`aider_complete` event payload)
+- [ ] Manual smoke test: run on a real tiny repo, confirm aider actually edits files and the merge structure looks right (deferred to first real run after `forge plan` is exercised end-to-end)
 
 ### 5.3 What can go wrong
 
 - **Aider hangs / asks for input.** Use `--yes` and `--no-stream`. Set a timeout (5–10 min per task).
 - **Aider "succeeds" but nothing changed.** Aider sometimes reports success while having made no edits. Mitigation: verify `git diff` is non-empty, treat empty diff as failure (or as a separate `no_changes` status worth flagging).
 - **Wrong files in scope.** Planner said "edit `Foo.kt`", Aider also touches `Bar.kt`. Mitigation: snapshot file list before, diff after, flag unexpected files in `ExecutionResult`.
+- **Status `skipped` is reserved for Stage 7.** The standalone `forge execute` does not know about run history (which tasks have completed vs. failed) and therefore never emits `skipped`. The Orchestrator (Stage 7) is the first emitter — it checks `RunState.completed_task_ids` against `task.depends_on` *before* invoking the Executor.
 
 ---
 
@@ -301,6 +308,10 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 - [ ] `forge/agents/orchestrator.py` — state machine driver. Loads `RunState`, asks Orchestrator LLM for next action **bounded to legal transitions** (provide enum of valid next actions in the prompt; fall back to deterministic logic if the LLM picks an illegal action)
 - [ ] `forge/agents/reporter.py` — reads full event log, produces `RUN_REPORT.md` at `.forge/runs/<run_id>/RUN_REPORT.md`
 - [ ] CLI: `forge run "user story"` — full pipeline end to end
+- [ ] **Orchestrator emits `skipped`** for tasks whose `depends_on` references unfinished tasks (checked against `RunState.completed_task_ids` *before* invoking the Executor). Skipped tasks do not create a task branch — `Executor.run` is not called. (D7)
+- [ ] **Orchestrator calls `git_ops.ensure_run_branch(run_id)` once at the start of a run.** Subsequent `Executor.run(...)` calls assume the run branch exists. The `forge execute` standalone path does this itself (idempotent), so the same `git_ops` primitive serves both call sites.
+- [ ] **End-of-task HEAD invariant.** After every `Executor.run(...)` HEAD is on the run branch — Orchestrator can invoke the next task without an explicit `git checkout`. This contract holds for every status: success, failed, no_changes, skipped.
+- [ ] **Failed tasks leave their branches behind on purpose.** `forge/task/<run_id>/<task_id>` with raw Aider commits (including out-of-scope edits, if any) persists for post-mortem inspection. Orchestrator does not clean these up; cleanup is a separate `forge clean --run-id <id>` concern.
 
 ### 7.2 Definition of Done
 
@@ -342,6 +353,9 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 - [ ] Documentalist persona — auto-update KB and open MR (the original README promise)
 - [ ] SQLite migration for event log (revisit decision 0.4.2 after real usage)
 - [ ] Web UI to view past runs
+- [ ] **Explicit `commit_type` field on `Task`.** Replace the heuristic in `forge/agents/executor.py` (`detect_commit_type`) with an explicit `commit_type: Literal["feat","fix","refactor","test","docs","chore","perf","style"]` field set by the Planner. Requires a SCHEMA_VERSION bump and a migrator for older state.json files. The heuristic is good enough for MVP but produces wrong types for goals that don't lead with one of the recognized verbs.
+- [ ] **Windows support for the Aider subprocess wrapper.** MVP is Linux-only because timeout enforcement uses `start_new_session=True` + `os.killpg(SIGKILL)` to catch Aider's child processes. Windows needs a different path (`CREATE_NEW_PROCESS_GROUP` + `GenerateConsoleCtrlEvent`, or a Job Object).
+- [ ] **`forge clean --run-id <id>`** to remove `forge/task/<run_id>/*` branches after a run is fully reviewed. Right now failed task branches accumulate; mass cleanup is `git branch -D $(git branch --list 'forge/*')` which is too blunt.
 
 ---
 
@@ -370,4 +384,4 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ---
 
-*Last updated: 2026-05-03 — resolved open questions 0.5 → 0.6, extended Stage 1 with config + pricing.*
+*Last updated: 2026-05-09 — Stage 5 complete (Executor + AiderRunner + git_ops + `forge execute` CLI). Stage 7 expanded with branch/merge invariants and `skipped` semantics. Stage 9 gained explicit `commit_type`, Windows support, and `forge clean` items.*

@@ -53,7 +53,16 @@ At the core of the pipeline is the Knowledge Base injected during initialization
 
 ## 🚀 Getting Started
 
-The runtime and CLI are under active development. The build plan is tracked in [`.forge/IMPLEMENTATION_PLAN.md`](.forge/IMPLEMENTATION_PLAN.md) — open it to see what is shipped and what is next.
+The runtime and CLI are under active development. The build plan is tracked in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — open it to see what is shipped and what is next.
+
+### Prerequisites
+
+- **Python 3.11+** for the runtime.
+- **Aider** on `PATH`. Install with `uv tool install aider-chat` or `pipx install aider-chat`. The Executor invokes `aider` as a subprocess and fails fast at construction if the binary is missing — pinning a version inside this project would couple us to upstream CLI changes, so version management stays with the user.
+- **Linux or macOS** for the MVP runtime. The Aider subprocess wrapper enforces the per-task timeout via process-group `SIGKILL` (so Aider's own children — linters, test runners — don't linger as orphans). Windows needs a different code path (`CREATE_NEW_PROCESS_GROUP` + Job Objects); tracked as Stage 9 work.
+- **Git** on `PATH`. The Executor branches per task (`forge/task/<run_id>/<task_id>`), squashes Aider's commits into one conventional commit on success, and `git merge --no-ff`s into the run branch (`forge/run/<run_id>`).
+
+### Local LLM development
 
 For local LLM development, `docker-compose.yml` and `start_llm.sh` provide an Ollama-based setup (Qwen, Gemma, Llama) — useful for running the Executor and Verifier offline.
 
