@@ -1,0 +1,22 @@
+# Verification preset: Node.js + pnpm (eslint + tsc + vitest/jest)
+#
+# Swap `pnpm` for `npm` or `yarn` if that's what your project uses.
+# `tsc --noEmit` catches type errors without producing build artifacts.
+
+[[verification.commands]]
+name = "eslint"
+command = "pnpm lint"
+stage = "verify_lint"
+timeout_seconds = 120
+
+[[verification.commands]]
+name = "typecheck"
+command = "pnpm exec tsc --noEmit"
+stage = "verify_compile"
+timeout_seconds = 180
+
+[[verification.commands]]
+name = "test"
+command = "pnpm test"
+stage = "verify_test"
+timeout_seconds = 600

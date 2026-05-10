@@ -228,6 +228,43 @@ def create_task_branch(repo: Path, run_id: str, task_id: str) -> str:
     return task_branch
 
 
+def drop_task_branch(repo: Path, run_id: str, task_id: str) -> bool:
+    """Force-delete a task branch if it exists. Returns True iff something
+    was deleted.
+
+    Used by the fix-loop runner between attempts: each iteration of the
+    fix loop is a fresh task branch off the run branch tip, but
+    `create_task_branch` refuses to clobber an existing branch (D3.8 —
+    leftover task branches signal a previous failed run worth inspecting).
+    For the runner's case, the previous iteration is *known* to be either
+    merged (success → critical verifier) or already classified as
+    failed/no_changes (early-exit path), so dropping is safe.
+
+    Force-delete (`branch -D`) rather than soft-delete because squashed
+    commits aren't reachable from the task branch after the merge, and
+    `branch -d` would refuse them as "not fully merged".
+
+    Always operates from the run branch — caller doesn't need to track
+    HEAD state.
+    """
+    task_branch = task_branch_name(run_id, task_id)
+    if not _branch_exists(repo, task_branch):
+        return False
+
+    run_branch = run_branch_name(run_id)
+    if not _branch_exists(repo, run_branch):
+        raise GitOpsError(
+            f"run branch {run_branch!r} does not exist — cannot safely drop "
+            f"task branch from an unknown HEAD."
+        )
+
+    # If we happen to be on the task branch right now, we can't delete it.
+    # Move to the run branch first.
+    _git(repo, "checkout", run_branch)
+    _git(repo, "branch", "-D", task_branch)
+    return True
+
+
 def has_new_commits_since(repo: Path, base_sha: str) -> bool:
     """True if HEAD has any commits not reachable from `base_sha`.
 

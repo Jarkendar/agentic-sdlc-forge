@@ -419,3 +419,78 @@ def test_providers_in_use_returns_distinct_providers() -> None:
         limits=Limits(),
     )
     assert cfg.providers_in_use() == {"anthropic", "ollama"}
+
+
+# ---------- [verification] section ----------
+
+
+def test_verification_section_optional(tmp_path: Path) -> None:
+    """A config without [verification] is valid; commands defaults to []."""
+    cfg = load_config(write_config(tmp_path, minimal_config_toml()))
+    assert cfg.verification.commands == []
+
+
+def test_verification_loads_multiple_commands(tmp_path: Path) -> None:
+    cfg = load_config(
+        write_config(
+            tmp_path,
+            minimal_config_toml() + """
+                [[verification.commands]]
+                name = "ruff"
+                command = "ruff check src tests"
+                stage = "verify_lint"
+                timeout_seconds = 60
+
+                [[verification.commands]]
+                name = "pytest"
+                command = "pytest -q"
+                stage = "verify_test"
+                timeout_seconds = 300
+            """,
+        )
+    )
+    assert len(cfg.verification.commands) == 2
+    assert cfg.verification.commands[0].name == "ruff"
+    assert cfg.verification.commands[0].stage == "verify_lint"
+    assert cfg.verification.commands[1].name == "pytest"
+    assert cfg.verification.commands[1].timeout_seconds == 300
+
+
+def test_verification_unknown_stage_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        load_config(
+            write_config(
+                tmp_path,
+                minimal_config_toml() + """
+                    [[verification.commands]]
+                    name = "smoke"
+                    command = "./smoke.sh"
+                    stage = "verify_smoke"
+                """,
+            )
+        )
+
+
+def test_verification_command_default_timeout(tmp_path: Path) -> None:
+    """timeout_seconds is optional and defaults to 300."""
+    cfg = load_config(
+        write_config(
+            tmp_path,
+            minimal_config_toml() + """
+                [[verification.commands]]
+                name = "ruff"
+                command = "ruff check ."
+                stage = "verify_lint"
+            """,
+        )
+    )
+    assert cfg.verification.commands[0].timeout_seconds == 300
+
+
+def test_example_config_loads_with_verification() -> None:
+    """The shipped example must include the verification section."""
+    cfg = load_config(EXAMPLE_CONFIG)
+    assert len(cfg.verification.commands) >= 1
+    stages = {c.stage for c in cfg.verification.commands}
+    # We ship at least one test command in the example.
+    assert "verify_test" in stages

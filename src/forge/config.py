@@ -30,6 +30,7 @@ from dotenv import find_dotenv, load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from forge.pricing import known_models
+from forge.schemas import VerificationCommand
 
 # ---------------------------------------------------------------------------
 # Persona names — locked by IMPLEMENTATION_PLAN §0.3
@@ -75,6 +76,24 @@ class Limits(BaseModel):
     task_timeout_seconds: int = Field(default=600, ge=1)
 
 
+class VerificationConfig(BaseModel):
+    """Verification commands the Verifier runs after each Executor success.
+
+    `commands` is a list (TOML array of tables) so users can declare
+    multiple commands at multiple stages — e.g. lint + tests + build.
+    Order matters: the first failing command short-circuits the rest.
+
+    Empty list is permitted at config-load time. The runner emits a
+    warning event and treats the task as passed; `forge run` (Stage 7)
+    is where production-style validation will reject empty configs.
+    Per-project presets live under `.forge/presets/`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    commands: list[VerificationCommand] = Field(default_factory=list)
+
+
 class ForgeConfig(BaseModel):
     """Full runtime config — what `.forge/config.toml` deserializes to."""
 
@@ -82,6 +101,7 @@ class ForgeConfig(BaseModel):
 
     models: dict[PersonaName, ModelAssignment]
     limits: Limits = Field(default_factory=Limits)
+    verification: VerificationConfig = Field(default_factory=VerificationConfig)
 
     @field_validator("models")
     @classmethod

@@ -5,10 +5,12 @@ from forge.schemas import (
     ExecutionResult,
     Failure,
     Plan,
+    RunReport,
     RunState,
     RunStatus,
     Task,
     TestReport,
+    VerificationCommand,
 )
 
 __all__ = [
@@ -16,8 +18,10 @@ __all__ = [
     "ExecutionResult",
     "Failure",
     "Plan",
+    "RunReport",
     "RunState",
     "RunStatus",
     "Task",
     "TestReport",
+    "VerificationCommand",
 ]

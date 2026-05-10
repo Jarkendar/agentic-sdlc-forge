@@ -18,10 +18,12 @@ from forge.schemas import (
     ExecutionResult,
     Failure,
     Plan,
+    RunReport,
     RunState,
     RunStatus,
     Task,
     TestReport,
+    VerificationCommand,
 )
 
 # ---------- Task ----------
@@ -141,6 +143,130 @@ def test_test_report_round_trip() -> None:
         severity="critical",
     )
     assert TestReport.model_validate_json(report.model_dump_json()) == report
+
+
+# ---------- VerificationCommand ----------
+
+
+def test_verification_command_round_trip() -> None:
+    cmd = VerificationCommand(
+        name="pytest",
+        command="pytest -q",
+        stage="verify_test",
+        timeout_seconds=300,
+    )
+    assert VerificationCommand.model_validate_json(cmd.model_dump_json()) == cmd
+
+
+def test_verification_command_default_timeout() -> None:
+    cmd = VerificationCommand(name="ruff", command="ruff check .", stage="verify_lint")
+    assert cmd.timeout_seconds == 300
+
+
+def test_verification_command_rejects_unknown_stage() -> None:
+    with pytest.raises(ValidationError):
+        VerificationCommand(
+            name="x", command="y", stage="verify_smoke",  # type: ignore[arg-type]
+        )
+
+
+def test_verification_command_rejects_zero_timeout() -> None:
+    with pytest.raises(ValidationError):
+        VerificationCommand(name="x", command="y", stage="verify_test", timeout_seconds=0)
+
+
+def test_verification_command_rejects_empty_strings() -> None:
+    with pytest.raises(ValidationError):
+        VerificationCommand(name="", command="y", stage="verify_test")
+    with pytest.raises(ValidationError):
+        VerificationCommand(name="x", command="", stage="verify_test")
+
+
+# ---------- RunReport ----------
+
+
+def _make_execution_result(task_id: str = "t1", status: str = "success") -> ExecutionResult:
+    return ExecutionResult(task_id=task_id, status=status, files_changed=[Path("a.py")])
+
+
+def _make_test_report(task_id: str = "t1", severity: str = "none") -> TestReport:
+    if severity == "none":
+        return TestReport(task_id=task_id, passed=True, failures=[], severity="none")
+    return TestReport(
+        task_id=task_id,
+        passed=False,
+        failures=[
+            Failure(
+                stage="verify_test",
+                command="pytest",
+                exit_code=1,
+                category="test",
+                message="boom",
+            )
+        ],
+        severity=severity,  # type: ignore[arg-type]
+    )
+
+
+def test_run_report_success_round_trip() -> None:
+    report = RunReport(
+        task_id="t1",
+        status="success",
+        attempts=1,
+        final_execution=_make_execution_result(),
+        final_test_report=_make_test_report(),
+    )
+    assert RunReport.model_validate_json(report.model_dump_json()) == report
+
+
+def test_run_report_escalated_with_critical_test_report() -> None:
+    report = RunReport(
+        task_id="t1",
+        status="escalated",
+        attempts=3,
+        final_execution=_make_execution_result(),
+        final_test_report=_make_test_report(severity="critical"),
+        escalation_reason="max_retries_per_task=3 exhausted",
+    )
+    restored = RunReport.model_validate_json(report.model_dump_json())
+    assert restored.status == "escalated"
+    assert restored.attempts == 3
+    assert restored.escalation_reason is not None
+    assert restored.final_test_report is not None
+    assert restored.final_test_report.severity == "critical"
+
+
+def test_run_report_failed_allows_none_test_report() -> None:
+    """status='failed' means the Verifier never ran — TestReport is None."""
+    report = RunReport(
+        task_id="t1",
+        status="failed",
+        attempts=1,
+        final_execution=_make_execution_result(status="no_changes"),
+        final_test_report=None,
+        escalation_reason="executor returned no_changes",
+    )
+    assert RunReport.model_validate_json(report.model_dump_json()) == report
+
+
+def test_run_report_attempts_must_be_at_least_one() -> None:
+    with pytest.raises(ValidationError):
+        RunReport(
+            task_id="t1",
+            status="success",
+            attempts=0,
+            final_execution=_make_execution_result(),
+        )
+
+
+def test_run_report_rejects_unknown_status() -> None:
+    with pytest.raises(ValidationError):
+        RunReport(
+            task_id="t1",
+            status="kinda",  # type: ignore[arg-type]
+            attempts=1,
+            final_execution=_make_execution_result(),
+        )
 
 
 # ---------- RunState ----------

@@ -1,0 +1,22 @@
+# Verification preset: Kotlin (Gradle + detekt)
+#
+# Assumes the gradle wrapper (`./gradlew`) is committed. If your project
+# uses the system gradle, swap `./gradlew` for `gradle` below.
+
+[[verification.commands]]
+name = "detekt"
+command = "./gradlew detekt"
+stage = "verify_lint"
+timeout_seconds = 180
+
+[[verification.commands]]
+name = "compile"
+command = "./gradlew compileKotlin compileTestKotlin"
+stage = "verify_compile"
+timeout_seconds = 300
+
+[[verification.commands]]
+name = "test"
+command = "./gradlew test"
+stage = "verify_test"
+timeout_seconds = 600

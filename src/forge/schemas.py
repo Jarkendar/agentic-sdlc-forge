@@ -159,6 +159,103 @@ class TestReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# VerificationCommand — declared in .forge/config.toml [verification]
+# ---------------------------------------------------------------------------
+
+
+#: Stages a verification command can run at. Mirrors `Failure.stage` so the
+#: Verifier can copy the value through unchanged when it builds a Failure.
+VerificationStage = Literal[
+    "verify_test",
+    "verify_lint",
+    "verify_build",
+    "verify_compile",
+]
+
+
+class VerificationCommand(BaseModel):
+    """One command the Verifier runs to check a task's work.
+
+    Configured per project in `.forge/config.toml` under `[[verification.commands]]`.
+    The runtime executes them in declaration order; the first failing
+    command short-circuits the rest (no point running tests if lint
+    catches a syntax error).
+
+    Stage 6 keeps `command` as a free string passed to a shell — that's
+    the only realistic surface for tools like `./gradlew test --info`
+    that bake their own argument quoting. Sandboxing is the user's
+    problem (the same way `aider` isn't sandboxed); we just run it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(
+        min_length=1,
+        description="Human label for logs and reports (e.g. 'pytest', 'gradle test').",
+    )
+    command: str = Field(
+        min_length=1,
+        description="Exact shell command. Run via `subprocess.run(shell=True)`.",
+    )
+    stage: VerificationStage
+    timeout_seconds: int = Field(
+        default=300,
+        ge=1,
+        description="Wall-clock cap for this command. Per-command, not run-wide.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# RunReport — produced by `forge.runner.run_task_with_fix_loop`
+# ---------------------------------------------------------------------------
+
+
+class RunReport(BaseModel):
+    """Outcome of running one task through the fix-loop runner.
+
+    The runner is the Stage 6 boundary above the Executor + Verifier. It
+    does not know about other tasks (that's Stage 7's Orchestrator) — it
+    just drives one task's fix loop until either success, a hard executor
+    failure, or the per-task retry cap.
+
+    `status` semantics:
+    - "success"   — final TestReport was non-critical (none/warning/flaky).
+    - "failed"    — Executor returned failed/no_changes; we never got to verify.
+    - "escalated" — verifier reported critical on every attempt up to the cap.
+
+    The distinction matters: "failed" is mechanical (Aider crashed, no
+    edits, dirty tree), "escalated" is semantic (we tried and the tests
+    keep failing) — different escalation paths in Stage 7.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    status: Literal["success", "failed", "escalated"]
+    attempts: int = Field(
+        ge=1,
+        description="Number of Executor invocations (1 = passed first try).",
+    )
+    final_execution: ExecutionResult = Field(
+        description="The ExecutionResult from the last attempt.",
+    )
+    final_test_report: TestReport | None = Field(
+        default=None,
+        description=(
+            "TestReport from the last attempt. None when status='failed' "
+            "and the Executor never produced a working state to verify."
+        ),
+    )
+    escalation_reason: str | None = Field(
+        default=None,
+        description=(
+            "Human-readable reason when status in {'failed','escalated'}. "
+            "None on success."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # OrchestratorDecision — produced by the Orchestrator each routing turn
 # ---------------------------------------------------------------------------
 

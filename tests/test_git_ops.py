@@ -18,6 +18,7 @@ from forge.git_ops import (
     create_task_branch,
     current_head_sha,
     diff_files_since,
+    drop_task_branch,
     ensure_clean_worktree,
     ensure_run_branch,
     has_new_commits_since,
@@ -381,3 +382,61 @@ def test_out_of_scope_with_empty_allowed_treats_all_as_violations() -> None:
     )
     assert edit.has_violations is True
     assert edit.offending == [Path("src/a.py")]
+
+
+# ---------------------------------------------------------------------------
+# drop_task_branch — used by the fix-loop runner between attempts
+# ---------------------------------------------------------------------------
+
+
+def test_drop_task_branch_removes_existing(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    ensure_run_branch(repo, "run-1")
+    create_task_branch(repo, "run-1", "task-001")
+
+    # Make a commit on the task branch so plain `branch -d` would refuse
+    # (it's not merged). drop_task_branch uses -D so it goes through.
+    _write(repo, "src/foo.py", "content\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "wip")
+
+    deleted = drop_task_branch(repo, "run-1", "task-001")
+    assert deleted is True
+
+    # Branch is gone
+    branches = _git(repo, "branch", "--list")
+    assert "forge/task/run-1/task-001" not in branches
+
+    # We're back on the run branch
+    head = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    assert head == run_branch_name("run-1")
+
+
+def test_drop_task_branch_returns_false_when_absent(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    ensure_run_branch(repo, "run-1")
+
+    deleted = drop_task_branch(repo, "run-1", "task-001")
+    assert deleted is False
+
+
+def test_drop_task_branch_works_when_currently_on_it(tmp_path: Path) -> None:
+    """Caller might still be on the task branch when retry kicks in."""
+    repo = _make_repo(tmp_path)
+    ensure_run_branch(repo, "run-1")
+    create_task_branch(repo, "run-1", "task-001")
+    # Confirm we are on the task branch right now
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "forge/task/run-1/task-001"
+
+    deleted = drop_task_branch(repo, "run-1", "task-001")
+    assert deleted is True
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == run_branch_name("run-1")
+
+
+def test_drop_task_branch_raises_without_run_branch(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    # Manually create a stray task branch without setting up the run branch.
+    _git(repo, "checkout", "-b", "forge/task/run-1/task-001")
+
+    with pytest.raises(GitOpsError, match="run branch"):
+        drop_task_branch(repo, "run-1", "task-001")

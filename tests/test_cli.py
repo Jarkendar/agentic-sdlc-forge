@@ -23,7 +23,7 @@ from forge.aider_runner import AiderInvocation, AiderResult
 from forge.event_log import EventLog
 from forge.git_ops import run_branch_name
 from forge.llm.base import LLMClient, LLMResponse
-from forge.schemas import Plan, Task
+from forge.schemas import Failure, Plan, Task, TestReport
 
 # ---------------------------------------------------------------------------
 # Local fakes — duplicated from tests/test_planner.py rather than imported.
@@ -593,3 +593,304 @@ def test_cmd_execute_returns_nonzero_on_aider_failure(
     out = capsys.readouterr().out
     parsed = json.loads(out)
     assert parsed["status"] == "failed"
+
+
+# ===========================================================================
+# `forge verify` — Stage 6
+# ===========================================================================
+#
+# Strategy: stand up a repo with a working config (verification commands
+# defined), prime the events.jsonl with a successful executor:validated
+# event (so cmd_verify can reconstruct ExecutionResult), then drive
+# cmd_verify with patched get_client and patched verifier command runner.
+
+
+def _write_verify_repo(repo: Path, *, with_verification: bool = True) -> None:
+    """Create the repo layout cmd_verify expects.
+
+    Adds: .forge/personas/{verifier,planner,etc}.md, .forge/config.toml
+    (with or without [verification]), .env (so validate_credentials passes
+    for the all-Ollama config we use in tests).
+    """
+    forge = repo / ".forge"
+    (forge / "personas").mkdir(parents=True)
+    (forge / "knowledge").mkdir(parents=True)
+
+    # All-Ollama config so validate_credentials needs no API keys.
+    base_models = (
+        "[models.orchestrator]\n"
+        'provider = "ollama"\nmodel = "llama3.1:8b"\n\n'
+        "[models.planner]\n"
+        'provider = "ollama"\nmodel = "llama3.1:8b"\n\n'
+        "[models.executor]\n"
+        'provider = "ollama"\nmodel = "llama3.1:8b"\n\n'
+        "[models.verifier]\n"
+        'provider = "ollama"\nmodel = "llama3.1:8b"\n\n'
+        "[models.reporter]\n"
+        'provider = "ollama"\nmodel = "llama3.1:8b"\n'
+    )
+    if with_verification:
+        verification = (
+            "\n[[verification.commands]]\n"
+            'name = "pytest"\n'
+            'command = "pytest -q"\n'
+            'stage = "verify_test"\n'
+            "timeout_seconds = 60\n"
+        )
+    else:
+        verification = ""
+    (forge / "config.toml").write_text(base_models + verification)
+
+    # All five personas exist (load_all_personas reads them all).
+    for name in ("orchestrator", "planner", "executor", "reporter"):
+        (forge / "personas" / f"{name}.md").write_text(
+            "---\n"
+            f"name: {name}\n"
+            "output_schema: null\n"
+            "required_vars: []\n"
+            "references: []\n"
+            "---\n"
+            f"# {name}\nNo body content.\n"
+        )
+
+    # Verifier persona with a real body that interpolates all required vars.
+    (forge / "personas" / "verifier.md").write_text(
+        "---\n"
+        "name: verifier\n"
+        "output_schema: TestReport\n"
+        "required_vars:\n"
+        "  - task_id\n"
+        "  - command\n"
+        "  - exit_code\n"
+        "  - stdout\n"
+        "  - stderr\n"
+        "  - touched_files\n"
+        "  - second_run_outcome\n"
+        "references: []\n"
+        "---\n"
+        "# Verifier\n"
+        "task={{task_id}} cmd={{command}} exit={{exit_code}}\n"
+        "stdout={{stdout}}\nstderr={{stderr}}\n"
+        "files={{touched_files}} second={{second_run_outcome}}\n"
+    )
+
+
+def _seed_executor_validated_event(repo: Path, run_id: str, task_id: str) -> Path:
+    """Write a synthetic events.jsonl with one executor:validated event for
+    `task_id` so cmd_verify's reconstruction path finds something."""
+    from forge.state import events_path
+    log_path = events_path(repo / ".forge", run_id)
+    with EventLog(log_path) as log:
+        log.log(
+            agent="executor",
+            phase="validated",
+            run_id=run_id,
+            payload={
+                "task_id": task_id,
+                "status": "success",
+                "files_changed": ["src/foo.py"],
+            },
+        )
+    return log_path
+
+
+# ---------- parser ----------
+
+
+def test_parser_accepts_verify_command() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["verify", "task-001", "--plan", "plan.json"])
+    assert args.task_id == "task-001"
+    assert args.plan == Path("plan.json")
+    assert args.func is cli.cmd_verify
+
+
+# ---------- happy path ----------
+
+
+def test_cmd_verify_returns_zero_on_severity_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_verify_repo(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    plan = _write_plan_file(plan_path)
+    _seed_executor_validated_event(tmp_path, plan.run_id, "task-001")
+
+    # Patch the command runner to report success
+    import forge.agents.verifier as verifier_module
+    from forge.agents.verifier import CommandResult
+
+    class _OkRunner:
+        def run(self, command, cwd):  # type: ignore[no-untyped-def]
+            return CommandResult(
+                exit_code=0, stdout="", stderr="", duration_ms=10, timed_out=False
+            )
+
+    monkeypatch.setattr(verifier_module, "_RealCommandRunner", lambda: _OkRunner())
+
+    # No LLM call expected on all-green; provide a client that would
+    # blow up if called, just to be sure.
+    class _ExplodingLLM(LLMClient):
+        provider = "fake"
+
+        def complete(self, *, system, user, schema=None):  # type: ignore[no-untyped-def]
+            raise AssertionError("LLM should not be called on all-green path")
+
+    monkeypatch.setattr(cli, "get_client", lambda persona, config: _ExplodingLLM())
+
+    args = argparse.Namespace(
+        task_id="task-001",
+        plan=plan_path,
+        config=None,
+        repo=tmp_path,
+    )
+    rc = cli.cmd_verify(args)
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert parsed["task_id"] == "task-001"
+    assert parsed["severity"] == "none"
+    assert parsed["passed"] is True
+
+
+def test_cmd_verify_returns_two_on_critical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_verify_repo(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    plan = _write_plan_file(plan_path)
+    _seed_executor_validated_event(tmp_path, plan.run_id, "task-001")
+
+    import forge.agents.verifier as verifier_module
+    from forge.agents.verifier import CommandResult
+
+    class _FailingRunner:
+        def run(self, command, cwd):  # type: ignore[no-untyped-def]
+            return CommandResult(
+                exit_code=1, stdout="", stderr="AssertionError",
+                duration_ms=10, timed_out=False,
+            )
+
+    monkeypatch.setattr(verifier_module, "_RealCommandRunner", lambda: _FailingRunner())
+
+    critical = TestReport(
+        task_id="task-001",
+        passed=False,
+        failures=[
+            Failure(
+                stage="verify_test",
+                command="pytest -q",
+                exit_code=1,
+                category="test",
+                message="boom",
+            )
+        ],
+        severity="critical",
+    )
+    monkeypatch.setattr(
+        cli, "get_client",
+        lambda persona, config: FakeLLMClient(_make_response(critical)),
+    )
+
+    args = argparse.Namespace(
+        task_id="task-001",
+        plan=plan_path,
+        config=None,
+        repo=tmp_path,
+    )
+    rc = cli.cmd_verify(args)
+    assert rc == 2  # documented exit code for severity=critical
+
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert parsed["severity"] == "critical"
+
+
+# ---------- failure paths ----------
+
+
+def test_cmd_verify_missing_plan_returns_one(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_verify_repo(tmp_path)
+    args = argparse.Namespace(
+        task_id="task-001",
+        plan=tmp_path / "missing.json",
+        config=None,
+        repo=tmp_path,
+    )
+    rc = cli.cmd_verify(args)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "plan" in err.lower()
+
+
+def test_cmd_verify_unknown_task_returns_one(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_verify_repo(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    _write_plan_file(plan_path)
+
+    args = argparse.Namespace(
+        task_id="task-999",
+        plan=plan_path,
+        config=None,
+        repo=tmp_path,
+    )
+    rc = cli.cmd_verify(args)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "task-999" in err
+
+
+def test_cmd_verify_no_verification_commands_returns_one(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Stage 6 invariant: forge verify needs at least one command."""
+    _write_verify_repo(tmp_path, with_verification=False)
+    plan_path = tmp_path / "plan.json"
+    plan = _write_plan_file(plan_path)
+    _seed_executor_validated_event(tmp_path, plan.run_id, "task-001")
+
+    args = argparse.Namespace(
+        task_id="task-001",
+        plan=plan_path,
+        config=None,
+        repo=tmp_path,
+    )
+    rc = cli.cmd_verify(args)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no verification commands" in err.lower()
+
+
+def test_cmd_verify_missing_executor_event_returns_one(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No executor:validated event in events.jsonl → reconstruct fails."""
+    _write_verify_repo(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    _write_plan_file(plan_path)
+    # No seeded event.
+
+    args = argparse.Namespace(
+        task_id="task-001",
+        plan=plan_path,
+        config=None,
+        repo=tmp_path,
+    )
+    rc = cli.cmd_verify(args)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no successful" in err.lower()
+    assert "task-001" in err
