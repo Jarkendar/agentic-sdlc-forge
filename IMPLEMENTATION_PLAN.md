@@ -124,6 +124,14 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 **Why now, not later:** the data is already returned by every provider's API; capturing it costs ~5 lines of code. Backfilling cost into historical runs is impossible. Without per-agent cost data, the "weak vs. strong models per persona" architecture has no measurable basis.
 
+#### 0.6.5 Orchestrator routing — **deterministic FSM, LLM as optional shadow** (D1, Stage 7)
+
+The Orchestrator's routing is a deterministic finite state machine in `forge/router.py`. The decision table in `.forge/personas/orchestrator.md` is the canonical contract; `tests/test_router_contract.py` parses the table and asserts the runtime agrees row-for-row.
+
+The persona prompt stays as documentation and as the surface for an **optional shadow LLM** (config knob, default OFF). When shadow is enabled, the LLM is called with the same inputs the deterministic router gets, its answer is validated against `legal_actions`, and the comparison is logged. The LLM never affects the actual route.
+
+**Rationale:** the decision table is closed and simple; LLM adds no value, costs tokens per turn, and adds a failure mode. Stage 6 already introduced three LLM-dependent paths (Planner, Verifier, Reporter); a fourth without a benefit was an anti-pattern. Shadow can be enabled later with one flag if prompt-tuning data becomes useful.
+
 ---
 
 ## Stage 1 — Foundations: schemas, state, event log
@@ -284,15 +292,15 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 6.1 Tasks
 
-- [ ] `forge/agents/verifier.py` — runs configured commands (e.g. `./gradlew test`, `pytest`, `ruff check`), captures output, sends to LLM for classification, returns `TestReport`
-- [ ] `forge/runner.py` — implements the fix loop: Executor → Verifier → if CRITICAL, feed failure back to Executor with `task.goal += "Previous attempt failed: {failure_summary}. Fix it."` → max 3 attempts → escalate
-- [ ] Per-project config for verification commands in `.forge/config.toml`
+- [x] `forge/agents/verifier.py` — runs configured commands (e.g. `./gradlew test`, `pytest`, `ruff check`), captures output, sends to LLM for classification, returns `TestReport`
+- [x] `forge/runner.py` — implements the fix loop: Executor → Verifier → if CRITICAL, feed failure back to Executor with `task.goal += "Previous attempt failed: {failure_summary}. Fix it."` → max 3 attempts → escalate
+- [x] Per-project config for verification commands in `.forge/config.toml`
 
 ### 6.2 Definition of Done
 
-- Deliberately introduce a failing change, verify Verifier catches it and classifies as CRITICAL
-- Verify fix loop runs, hits limit, escalates cleanly (with a clear "human needed" event in the log)
-- Flaky test (random pass/fail) is correctly classified as FLAKY on second attempt
+- [x] Deliberately introduce a failing change, verify Verifier catches it and classifies as CRITICAL (covered by `tests/test_verifier.py` + `tests/test_runner.py`)
+- [x] Verify fix loop runs, hits limit, escalates cleanly (with a clear "human needed" event in the log)
+- [x] Flaky test (random pass/fail) is correctly classified as FLAKY on second attempt (Verifier's internal re-run path)
 
 ### 6.3 What can go wrong
 
@@ -305,24 +313,35 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ### 7.1 Tasks
 
-- [ ] `forge/agents/orchestrator.py` — state machine driver. Loads `RunState`, asks Orchestrator LLM for next action **bounded to legal transitions** (provide enum of valid next actions in the prompt; fall back to deterministic logic if the LLM picks an illegal action)
-- [ ] `forge/agents/reporter.py` — reads full event log, produces `RUN_REPORT.md` at `.forge/runs/<run_id>/RUN_REPORT.md`
-- [ ] CLI: `forge run "user story"` — full pipeline end to end
-- [ ] **Orchestrator emits `skipped`** for tasks whose `depends_on` references unfinished tasks (checked against `RunState.completed_task_ids` *before* invoking the Executor). Skipped tasks do not create a task branch — `Executor.run` is not called. (D7)
-- [ ] **Orchestrator calls `git_ops.ensure_run_branch(run_id)` once at the start of a run.** Subsequent `Executor.run(...)` calls assume the run branch exists. The `forge execute` standalone path does this itself (idempotent), so the same `git_ops` primitive serves both call sites.
-- [ ] **End-of-task HEAD invariant.** After every `Executor.run(...)` HEAD is on the run branch — Orchestrator can invoke the next task without an explicit `git checkout`. This contract holds for every status: success, failed, no_changes, skipped.
-- [ ] **Failed tasks leave their branches behind on purpose.** `forge/task/<run_id>/<task_id>` with raw Aider commits (including out-of-scope edits, if any) persists for post-mortem inspection. Orchestrator does not clean these up; cleanup is a separate `forge clean --run-id <id>` concern.
+- [x] **Deterministic FSM router** in `forge/router.py` mirroring the decision table in `.forge/personas/orchestrator.md` (D1 — see 0.6.5). Pure function: `(current_state, last_event_kind, retry_caps_exhausted, more_tasks) → OrchestratorAction`. The shadow-LLM path stays as a future config knob; the persona file remains the canonical contract.
+- [x] **Contract test** `tests/test_router_contract.py` — parses the decision table out of `orchestrator.md` and asserts the deterministic router agrees row-for-row. Drift between MD and code fails CI.
+- [x] `forge/agents/orchestrator.py` — state machine driver. Pre-flight (clean worktree, run branch), Planner invocation, per-task loop, skipped propagation, retry-cap enforcement, Reporter handoff. **No LLM call** on the routing path (per D1); `OrchestratorDecision` schema retained for the future shadow path.
+- [x] `forge/agents/reporter.py` — reads `events.jsonl`, aggregates per-agent tokens & `cost_usd` into a pre-built markdown table (so the LLM cannot invent numbers), calls Reporter persona, writes `RUN_REPORT.md` verbatim to `.forge/runs/<run_id>/RUN_REPORT.md`. Truncates very large logs (head + tail with `[ELIDED: N bytes]` marker) to protect the prompt's token budget.
+- [x] CLI: `forge run "user story"` — full pipeline end to end. Exit codes: `0` DONE, `1` pre-flight error, `2` FAILED/ESCALATED.
+- [x] CLI: `forge run --resume <run_id>` — resume from saved `state.json`. Rejects terminal-status runs (DONE/FAILED/ESCALATED) loudly.
+- [x] CLI: `forge report <run_id>` — re-render `RUN_REPORT.md` from an existing event log without re-running anything else. Useful when iterating on `reporter.md`.
+- [x] **Orchestrator emits `skipped`** for tasks whose `depends_on` references unfinished tasks (checked against `RunState.completed_task_ids` *before* invoking the Executor). Skipped tasks do not create a task branch — `Executor.run` is not called. (D7). The skipped event carries a `skip_reason` mentioning the upstream task ID and its status (`failed` / `skipped` / `unknown`), and a synthetic `executor:validated` event is emitted alongside so Reporter's task-table aggregation treats skipped uniformly.
+- [x] **Skipped propagates** through dependency chains: t1 fails → t2 deps t1 → skipped → t3 deps t2 → skipped.
+- [x] **Task order = Planner's order** (D4). `depends_on` is checked only to decide skip-vs-execute, not to topo-sort.
+- [x] **State persisted at every transition.** 6 checkpoints: pre-PLAN, post-PLAN, before each task, after each task, after each skip, before/after Reporter. Crash mid-task → `forge run --resume <run_id>` picks up at the next unprocessed task.
+- [x] **ESCALATED is sticky.** Once any task escalates (per-task cap exhausted) or the run-wide cap fires, the run's status stays ESCALATED even if subsequent tasks succeed — the "run is broken" signal must reach Reporter.
+- [x] **Reporter always runs** for every terminal status (DONE / ESCALATED / FAILED). Reporter exceptions are non-fatal — logged but don't change the terminal status. Re-run with `forge report <run_id>` if needed.
+- [x] **Orchestrator calls `git_ops.ensure_run_branch(run_id)` once at the start of a run.** Subsequent `Executor.run(...)` calls assume the run branch exists. The `forge execute` standalone path does this itself (idempotent), so the same `git_ops` primitive serves both call sites.
+- [x] **End-of-task HEAD invariant.** After every `Executor.run(...)` HEAD is on the run branch — Orchestrator can invoke the next task without an explicit `git checkout`. This contract holds for every status: success, failed, no_changes, skipped.
+- [x] **Failed tasks leave their branches behind on purpose.** `forge/task/<run_id>/<task_id>` with raw Aider commits (including out-of-scope edits, if any) persists for post-mortem inspection. Orchestrator does not clean these up; cleanup is a separate `forge clean --run-id <id>` concern.
 
 ### 7.2 Definition of Done
 
-- End-to-end run on a real (small) user story produces: a plan, executed tasks, passing tests, a markdown report
-- Report includes: tasks completed, tasks failed, total tokens per agent, total cost estimate, time per stage, escalations
-- Run is fully resumable: kill the process mid-run, `forge run --resume <run_id>` picks up where it stopped
+- [x] End-to-end run on a real (small) user story produces: a plan, executed tasks, passing tests, a markdown report (covered by orchestrator + reporter unit tests; **manual smoke test on a real repo deferred** — carries the Stage 5 smoke test too)
+- [x] Report includes: tasks completed, tasks failed, total tokens per agent, total cost estimate, time per stage, escalations (cost table is pre-built by Reporter; persona prompt covers the narrative sections)
+- [x] Run is fully resumable: kill the process mid-run, `forge run --resume <run_id>` picks up where it stopped (covered by `tests/test_orchestrator.py::test_state_persists_after_partial_run` + `tests/test_cli_stage7.py`)
+- [x] 63 new tests passing on top of the existing suite. Ruff clean.
 
 ### 7.3 What can go wrong
 
-- **Orchestrator "creativity"** — Haiku invents an action not in the legal set. Mitigation already specified: deterministic fallback. Log the LLM's illegal suggestion for prompt-tuning.
-- **Infinite loops** — Orchestrator keeps routing back to FIX_LOOP. The hard retry caps catch this, but log loudly when they trigger.
+- **Orchestrator "creativity"** — moot under D1 because the deterministic router has no LLM in the loop. When shadow is enabled later, illegal LLM choices are logged but ignored.
+- **Infinite loops** — bounded by `max_retries_per_task=3` (per-task) and `max_retries_per_run=10` (run-wide). Run-wide cap fires before per-task chain can spend the whole budget.
+- **MD / router drift** — caught by `tests/test_router_contract.py` at CI time.
 
 ---
 
@@ -356,6 +375,8 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 - [ ] **Explicit `commit_type` field on `Task`.** Replace the heuristic in `forge/agents/executor.py` (`detect_commit_type`) with an explicit `commit_type: Literal["feat","fix","refactor","test","docs","chore","perf","style"]` field set by the Planner. Requires a SCHEMA_VERSION bump and a migrator for older state.json files. The heuristic is good enough for MVP but produces wrong types for goals that don't lead with one of the recognized verbs.
 - [ ] **Windows support for the Aider subprocess wrapper.** MVP is Linux-only because timeout enforcement uses `start_new_session=True` + `os.killpg(SIGKILL)` to catch Aider's child processes. Windows needs a different path (`CREATE_NEW_PROCESS_GROUP` + `GenerateConsoleCtrlEvent`, or a Job Object).
 - [ ] **`forge clean --run-id <id>`** to remove `forge/task/<run_id>/*` branches after a run is fully reviewed. Right now failed task branches accumulate; mass cleanup is `git branch -D $(git branch --list 'forge/*')` which is too blunt.
+- [ ] **`forge replay <run_id> --only-failed`** — produce a fresh run whose plan consists of the failed and skipped tasks from a previous run, with the previous `RUN_REPORT.md` and last `TestReport`s injected into the Planner's input so it knows what to fix. Stage 7 already produces the data this needs (events.jsonl + RUN_REPORT.md + state.json with `failed_task_ids` / `skipped_task_ids`); this item is purely the consumption mechanism. Open questions: does replay reuse the original `run_id` (and append-write the same `events.jsonl`) or start a new one? Current bias: new run_id, with a `previous_run_id` field on the new RunState for traceability.
+- [ ] **Orchestrator shadow LLM.** Flip the config knob `[orchestrator] shadow_llm = true` to call the Orchestrator persona alongside the deterministic router per turn, log the comparison, and ignore the LLM's answer. Use the data for prompt-tuning or to evaluate whether LLM-first routing is worth re-enabling. See 0.6.5.
 
 ---
 
@@ -367,7 +388,7 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 | Aider hangs on input | medium | medium | `--yes --no-stream` flags + timeout |
 | Cost runaway from retry loops | medium | high | Hard caps in fix loop; cost tracking in Reporter from day 1 |
 | Schema changes break existing runs | medium | low | Schema versioning; runs tagged with schema version |
-| Orchestrator misroutes | low | medium | Bounded action set; deterministic fallback |
+| Orchestrator misroutes | low | medium | Deterministic FSM router (D1); MD-vs-code contract test |
 | Prompts and schemas drift | high | medium | Auto-generation or contract tests in Stage 2 |
 | Local Ollama models too weak for Verifier | medium | medium | Verifier defaults to Anthropic; Ollama is optional fallback |
 
@@ -384,4 +405,4 @@ Every event in the JSONL log carries `tokens_in`, `tokens_out`, `cost_usd`, `dur
 
 ---
 
-*Last updated: 2026-05-09 — Stage 5 complete (Executor + AiderRunner + git_ops + `forge execute` CLI). Stage 7 expanded with branch/merge invariants and `skipped` semantics. Stage 9 gained explicit `commit_type`, Windows support, and `forge clean` items.*
+*Last updated: 2026-05-11 — Stage 7 complete (Orchestrator + Reporter + `forge run` with `--resume` + `forge report`). Deterministic FSM router (D1, 0.6.5) with contract test against `orchestrator.md`. 63 new tests on top of the existing suite. `forge replay --only-failed` and Orchestrator shadow LLM carried to Stage 9 backlog.*

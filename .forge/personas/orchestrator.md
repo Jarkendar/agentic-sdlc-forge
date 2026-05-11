@@ -66,6 +66,13 @@ Return a single `OrchestratorDecision` JSON object — nothing else.
 
 # Decision table
 
+> **Implementation note (Stage 7, D1).** The runtime executes this table
+> deterministically in `forge.router.decide_next_action`. This persona file
+> is the canonical contract; the test `tests/test_router_contract.py`
+> parses the table below and asserts that the runtime agrees row-for-row.
+> When the deterministic router and the table disagree, the test fails —
+> update both together.
+
 | Current state | Last event | Retry caps OK | Decision |
 |---|---|---|---|
 | PLAN | plan succeeded | — | EXECUTE |
