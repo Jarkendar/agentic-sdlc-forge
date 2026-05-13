@@ -351,16 +351,31 @@ The persona prompt stays as documentation and as the surface for an **optional s
 
 ### 8.1 Tasks
 
-- [ ] `forge/cli.py` — Click or Typer based CLI: `init`, `run`, `plan`, `execute`, `report`
-- [ ] `forge init` — copies `.forge/` template into target dir, optionally runs the architecture interview
-- [ ] Wire `architecture_map.md` interview from existing draft: ask sections 1–5, collect answers, send to LLM with synthesis prompt, write `.forge/architecture_map.md`
-- [ ] `forge init --no-interview` to skip (for repos that already have an architecture map)
+- [x] `src/forge/templates/` — bundled package data with the full `.forge/` skeleton: `config.example.toml`, `git_flow.md`, `architecture_map.md` (interview reference), `personas/*.md` (5 runtime + new init-only `architect.md`), `presets/*.toml`, `knowledge/architecture.md.template`, plus `env.example` at project root.
+- [x] `forge/init_scaffold.py` — pure-filesystem scaffold: `scaffold(target, no_interview)`. Idempotency guard (re-init refused in MVP), `.gitignore` append with markers, copy via `importlib.resources` (works from wheel and editable install).
+- [x] `forge/interview.py` — terminal Q&A driver. 23 questions covering sections 1–5. **Multi-select picker for 3.1** (architectural pattern) with 11 options + "Other" free-text fallback. **File-tree hint before 3.2** using existing `build_file_tree`, truncated to 40 lines. I/O is injectable (ask/output/file_tree_fn) so tests don't need a TTY.
+- [x] `forge/agents/architect.py` — synthesis agent. Free-text output like Reporter (`output_schema: null`). Validates that the LLM response contains all five required section headers (`## 1.` through `## 5.`); one retry with explicit missing-sections hint, then hard error.
+- [x] `forge/cli.py` — `forge init [--target PATH] [--no-interview] [--architect-provider ...] [--architect-model ...]`. Two-phase flow: scaffold → interview + architect.
+- [x] **Architect is intentionally NOT in `PersonaName`** — `forge init` runs before `config.toml` exists, so the architect's LLM client is constructed directly in `cmd_init` rather than via `forge.llm.factory`.
 
 ### 8.2 Definition of Done
 
-- `forge init` on a clean directory produces a usable `.forge/` setup
-- Interview produces a non-trivial `architecture_map.md` from realistic answers
-- `forge run` works in the freshly-initialized project
+- [x] `forge init --no-interview` on an empty directory produces a usable `.forge/` setup (verified end-to-end in `test_cli_init.py` and by manual smoke test in `/tmp`)
+- [x] Interview collects all answers from sections 1–5 with the 3.1 picker working for numbers, names, "Other", and combinations (10 picker test cases in `test_interview.py`)
+- [x] `forge plan` works in the freshly-initialized project (verified: loads config, demands ANTHROPIC_API_KEY — i.e. all earlier stages still wire up)
+- [x] Re-init refused with a clear message pointing at the files to edit instead
+- [x] `.gitignore` is appended (preserving existing content) or created
+- [x] 52 new tests on top of the existing 352 (404 total, all green); ruff clean for new code
+
+### 8.3 What was carried to Stage 9
+
+- Re-init: `forge init --force` with `.bak` backups for each clobbered file
+- `forge init --update-personas` to refresh persona files from the latest Forge version without touching config or knowledge
+- `--resume-interview` after Ctrl+C — MVP simply aborts and leaves scaffold artifacts behind
+- Multi-pickers for the other questions: 2.1 (platform), 2.3 (build system), 4.1 (API type), 4.2 (database)
+- Localization: `--lang pl` for Polish questions (architect synthesis still produces English output)
+- `$EDITOR` invocation for long answers (multi-line module trees in 3.2)
+- Ollama as architect provider — currently anthropic-only because synthesis quality matters more than cost for this single call
 
 ---
 
@@ -372,6 +387,13 @@ The persona prompt stays as documentation and as the surface for an **optional s
 - [ ] Documentalist persona — auto-update KB and open MR (the original README promise)
 - [ ] SQLite migration for event log (revisit decision 0.4.2 after real usage)
 - [ ] Web UI to view past runs
+- [ ] **`forge init --force`** with `.bak` backups for each clobbered file. MVP refuses re-init outright; this enables "re-run the interview" workflows without a manual `rm -rf .forge/`.
+- [ ] **`forge init --update-personas`** to sync persona files from the latest Forge version without touching `config.toml` or `knowledge/architecture.md`. Useful when Forge ships a persona prompt improvement and existing projects want to opt in.
+- [ ] **`forge init --resume-interview`** — restore a draft interview file written on Ctrl+C and pick up where the user stopped. Requires a draft format and a resume marker; MVP aborts cleanly and leaves scaffold files behind, no draft saved.
+- [ ] **Multi-pickers for the rest of the interview**: 2.1 (platform), 2.3 (build system), 4.1 (API type), 4.2 (local DB). Same pattern as 3.1 — numbered options + multi-select + "Other" free-text.
+- [ ] **`forge init --lang pl`** (and other locales). Architect synthesis stays in English regardless. Currently the interview is English-only.
+- [ ] **`$EDITOR` invocation in interview** — opening `$EDITOR` for long answers like 3.2's module tree. MVP collects everything through `input()`; multi-line paste works in most terminals but is awkward.
+- [ ] **Ollama as architect provider**. `forge init --architect-provider ollama --architect-model qwen2.5-coder:7b`. Currently anthropic-only because synthesis quality matters a lot for a document the Planner re-reads on every run; the cost is one strong-model call per project lifetime, which is cheap.
 - [ ] **Explicit `commit_type` field on `Task`.** Replace the heuristic in `forge/agents/executor.py` (`detect_commit_type`) with an explicit `commit_type: Literal["feat","fix","refactor","test","docs","chore","perf","style"]` field set by the Planner. Requires a SCHEMA_VERSION bump and a migrator for older state.json files. The heuristic is good enough for MVP but produces wrong types for goals that don't lead with one of the recognized verbs.
 - [ ] **Windows support for the Aider subprocess wrapper.** MVP is Linux-only because timeout enforcement uses `start_new_session=True` + `os.killpg(SIGKILL)` to catch Aider's child processes. Windows needs a different path (`CREATE_NEW_PROCESS_GROUP` + `GenerateConsoleCtrlEvent`, or a Job Object).
 - [ ] **`forge clean --run-id <id>`** to remove `forge/task/<run_id>/*` branches after a run is fully reviewed. Right now failed task branches accumulate; mass cleanup is `git branch -D $(git branch --list 'forge/*')` which is too blunt.
@@ -405,4 +427,4 @@ The persona prompt stays as documentation and as the surface for an **optional s
 
 ---
 
-*Last updated: 2026-05-11 — Stage 7 complete (Orchestrator + Reporter + `forge run` with `--resume` + `forge report`). Deterministic FSM router (D1, 0.6.5) with contract test against `orchestrator.md`. 63 new tests on top of the existing suite. `forge replay --only-failed` and Orchestrator shadow LLM carried to Stage 9 backlog.*
+*Last updated: 2026-05-13 — Stage 8 complete (`forge init` with architecture interview + architect synthesis persona). 52 new tests on top of Stage 7's suite (404 total). Carried to Stage 9: `--force` re-init, `--update-personas`, `--resume-interview`, multi-pickers for 2.1/2.3/4.1/4.2, locale support, `$EDITOR` for long answers, Ollama as architect provider.*

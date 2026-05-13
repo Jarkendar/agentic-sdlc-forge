@@ -1,0 +1,17 @@
+# Verification preset: Python (pytest + ruff)
+#
+# Copy the [[verification.commands]] entries below into your
+# .forge/config.toml. Adjust paths to match your project layout
+# (e.g. `ruff check .` if you don't keep code under `src/`).
+
+[[verification.commands]]
+name = "ruff"
+command = "ruff check src tests"
+stage = "verify_lint"
+timeout_seconds = 60
+
+[[verification.commands]]
+name = "pytest"
+command = "pytest -q"
+stage = "verify_test"
+timeout_seconds = 300

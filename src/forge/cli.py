@@ -26,6 +26,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from forge.agents.architect import ArchitectError, run_architect
 from forge.agents.executor import ExecutorError, run_executor
 from forge.agents.orchestrator import (
     OrchestratorDeps,
@@ -38,8 +39,10 @@ from forge.agents.verifier import run_verifier
 from forge.aider_runner import AiderNotFoundError, AiderRunner
 from forge.config import load_config, validate_credentials
 from forge.event_log import EventLog
+from forge.init_scaffold import ScaffoldError, scaffold
+from forge.interview import Interview
 from forge.llm.factory import get_client
-from forge.personas import load_all_personas
+from forge.personas import load_all_personas, load_persona
 from forge.schemas import ExecutionResult, Plan, RunState, RunStatus, TestReport
 from forge.state import events_path, generate_run_id, load_state, save_state
 
@@ -54,6 +57,47 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the argparse parser. Separated for testability."""
     parser = argparse.ArgumentParser(prog="forge", description="Agentic SDLC Forge")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    # ----------- init (Stage 8) -------------------------------------------
+    init_p = sub.add_parser(
+        "init",
+        help="Scaffold .forge/ and (optionally) run the architecture interview.",
+    )
+    init_p.add_argument(
+        "--target",
+        type=Path,
+        default=Path("."),
+        help="Directory to scaffold into. Default: current directory.",
+    )
+    init_p.add_argument(
+        "--no-interview",
+        action="store_true",
+        help=(
+            "Skip the architecture interview. A template architecture.md "
+            "is copied in its place — fill in the TODOs before running "
+            "`forge plan`."
+        ),
+    )
+    init_p.add_argument(
+        "--architect-provider",
+        choices=("anthropic",),
+        default="anthropic",
+        help=(
+            "Provider for the architect synthesis call. Only Anthropic is "
+            "supported for `forge init` today — Ollama gives much weaker "
+            "synthesis quality. Default: anthropic."
+        ),
+    )
+    init_p.add_argument(
+        "--architect-model",
+        default="claude-opus-4-7",
+        help=(
+            "Model for the architect synthesis call. Default: claude-opus-4-7. "
+            "Override with a cheaper model (e.g. claude-sonnet-4-6) if you "
+            "want to save tokens."
+        ),
+    )
+    init_p.set_defaults(func=cmd_init)
 
     # ----------- plan ------------------------------------------------------
     plan = sub.add_parser("plan", help="Run the Planner on a user story.")
@@ -210,6 +254,162 @@ def build_parser() -> argparse.ArgumentParser:
     report_p.set_defaults(func=cmd_report)
 
     return parser
+
+
+# ===========================================================================
+# cmd_init — Stage 8
+# ===========================================================================
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """Handler for `forge init`. Returns process exit code.
+
+    Two-phase flow:
+
+    1. **Scaffold**. Always runs first. Creates `.forge/`, copies templates,
+       updates `.gitignore`. Idempotent only in the negative sense: if
+       `.forge/` exists, abort. No re-init in MVP.
+
+    2. **Interview + architect** (unless `--no-interview`). Asks the
+       developer the questions, hands the answers to the architect agent
+       (a strong-model LLM call), writes the synthesized `architecture.md`
+       under `.forge/knowledge/`.
+
+    The architect LLM is constructed directly here, not via
+    `forge.llm.factory.get_client`. The factory needs a ForgeConfig and
+    a PersonaName — but during `init` there's no config.toml yet (it gets
+    scaffolded mid-handler), and architect is intentionally outside
+    PersonaName (it's not a runtime persona, just a setup-time one).
+    """
+    target: Path = args.target.resolve()
+
+    # ---- Phase 1: scaffold -----------------------------------------------
+    try:
+        result = scaffold(target, no_interview=args.no_interview)
+    except ScaffoldError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Scaffolded {result.forge_dir}")
+    print("  - config.toml         (copy of config.example.toml)")
+    print("  - personas/           (5 runtime personas + 1 init-only architect)")
+    print("  - presets/            (verification presets per stack)")
+    print("  - git_flow.md         (mandatory git rules for agents)")
+    print(f"Created {result.env_example_path}")
+    if result.gitignore_created:
+        print(f"Created {result.gitignore_path} (forge entries only)")
+    elif result.gitignore_changed:
+        print(f"Updated {result.gitignore_path} (appended .forge/runs/ and .env)")
+
+    # ---- Phase 2: interview + architect ----------------------------------
+    if args.no_interview:
+        print()
+        print(f"Skipped interview. Template at {result.architecture_path}.")
+        print("Fill in the TODOs before running `forge plan` or `forge run`.")
+        return 0
+
+    # Interview I/O is wired to the real terminal here. Tests drive
+    # cmd_init by setting args.no_interview=True; the interview-itself
+    # has its own tests with fake I/O.
+    interview = Interview()
+    try:
+        outcome = interview.run(
+            repo=target,
+            default_project_name=target.name,
+        )
+    except KeyboardInterrupt:
+        # Don't print a stack trace — abort cleanly. The scaffolded files
+        # remain in place; user can run with --no-interview to use them,
+        # or `rm -rf .forge .env.example` and start over.
+        print("\nAborted. Scaffolded files remain in place; rerun later "
+              "with --no-interview to keep them and fill architecture.md "
+              "manually.", file=sys.stderr)
+        return 130  # conventional exit code for SIGINT
+
+    # ---- Architect LLM ----
+    # We instantiate the client directly rather than via factory because
+    # there's no PersonaName for architect (deliberate — see module
+    # docstring in forge.agents.architect).
+    if args.architect_provider == "anthropic":
+        # Local import: `anthropic` is in [project.optional-dependencies.dev]
+        # and we don't want to make it a hard dep just for init. If the
+        # user picked --no-interview, none of this runs and we don't care.
+        try:
+            from forge.llm.anthropic_client import AnthropicClient
+        except ImportError as e:
+            print(
+                f"error: anthropic provider requires the 'anthropic' package. "
+                f"Install with `pip install agentic-sdlc-forge[dev]` "
+                f"or pass --no-interview to skip the synthesis step. ({e})",
+                file=sys.stderr,
+            )
+            return 1
+        llm = AnthropicClient(model=args.architect_model)
+    else:
+        # Unreachable: argparse choices=("anthropic",) gates this.
+        print(f"error: unsupported architect provider: {args.architect_provider}",
+              file=sys.stderr)
+        return 1
+
+    # Eager-check the API key, same pattern as `forge run`. We bypass
+    # validate_credentials because that's keyed on PersonaName/provider
+    # in a config we haven't loaded yet.
+    import os
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        # Load .env if present (project just got an .env.example, but the
+        # user may have already created .env from a sibling project).
+        from dotenv import find_dotenv, load_dotenv
+        dotenv_path = find_dotenv(usecwd=True)
+        if dotenv_path:
+            load_dotenv(dotenv_path=dotenv_path, override=False)
+        if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+            print(
+                "error: ANTHROPIC_API_KEY is not set. The architect "
+                "synthesis call needs it. Set it in your environment "
+                "(or copy .env.example to .env and fill it in), then "
+                "run `forge init` again with --no-interview to keep the "
+                "current scaffold and fill architecture.md manually, "
+                "or wipe .forge/ and rerun the interview.",
+                file=sys.stderr,
+            )
+            return 1
+
+    # ---- Load the architect persona we just scaffolded ----
+    architect_persona_path = result.forge_dir / "personas" / "architect.md"
+    try:
+        architect_persona = load_persona(architect_persona_path)
+    except Exception as e:
+        # load_persona raises PersonaLoadError; we widen to Exception to
+        # also catch FileNotFoundError if someone wiped the file between
+        # scaffold and now.
+        print(f"error: cannot load architect persona at {architect_persona_path}: {e}",
+              file=sys.stderr)
+        return 1
+
+    print()
+    print("Synthesizing architecture.md ...")
+    try:
+        content = run_architect(
+            project_name=outcome.project_name,
+            answers=outcome.answers,
+            persona=architect_persona,
+            llm=llm,
+        )
+    except ArchitectError as e:
+        print(f"error: architect synthesis failed: {e}", file=sys.stderr)
+        return 1
+
+    # ---- Write architecture.md ----
+    arch_path = result.forge_dir / "knowledge" / "architecture.md"
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    arch_path.write_text(content, encoding="utf-8")
+    print(f"Wrote {arch_path} ({len(content)} chars)")
+    print()
+    print("Done. Next steps:")
+    print(f"  1. Review {arch_path}")
+    print("  2. Set ANTHROPIC_API_KEY (copy .env.example -> .env)")
+    print("  3. Run `forge plan \"your first user story\"` to try the planner")
+    return 0
 
 
 # ===========================================================================

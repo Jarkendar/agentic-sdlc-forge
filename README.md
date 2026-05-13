@@ -53,7 +53,7 @@ At the core of the pipeline is the Knowledge Base injected during initialization
 
 ## 🚀 Getting Started
 
-The runtime and CLI are under active development. The build plan is tracked in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — open it to see what is shipped and what is next.
+The build plan is tracked in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — open it to see what is shipped and what is next.
 
 ### Prerequisites
 
@@ -62,9 +62,47 @@ The runtime and CLI are under active development. The build plan is tracked in [
 - **Linux or macOS** for the MVP runtime. The Aider subprocess wrapper enforces the per-task timeout via process-group `SIGKILL` (so Aider's own children — linters, test runners — don't linger as orphans). Windows needs a different code path (`CREATE_NEW_PROCESS_GROUP` + Job Objects); tracked as Stage 9 work.
 - **Git** on `PATH`. The Executor branches per task (`forge/task/<run_id>/<task_id>`), squashes Aider's commits into one conventional commit on success, and `git merge --no-ff`s into the run branch (`forge/run/<run_id>`).
 
+### Install
+
+```bash
+git clone https://github.com/Jarkendar/agentic-sdlc-forge.git
+cd agentic-sdlc-forge
+uv sync                        # or: pip install -e ".[dev]"
+```
+
+### Initialize a project
+
+In any project directory you want Forge to manage:
+
+```bash
+cd /path/to/your/project
+forge init                     # interactive: asks ~23 architecture questions
+forge init --no-interview      # quick: drops a template architecture.md to edit by hand
+```
+
+What `forge init` does:
+
+1. **Scaffolds `.forge/`** — `config.toml` (model assignments), `personas/` (5 runtime personas + the init-only `architect`), `presets/` (per-stack verification commands for Python, Android, KMP, Kotlin/JVM, Node), `git_flow.md`, `architecture_map.md` (interview reference).
+2. **Drops `.env.example`** at the project root with the `ANTHROPIC_API_KEY` slot.
+3. **Updates `.gitignore`** (or creates one) with `.forge/runs/` and `.env`.
+4. **Runs the architecture interview** (unless `--no-interview`) — sections 1–5 covering project identity, tech stack, architecture, integrations, and known constraints. Section 3.1 uses a multi-select picker; 3.2 shows a snapshot of your current file tree as a hint.
+5. **Synthesizes `architecture.md`** — passes the raw answers to the `architect` persona (one Claude Opus call by default; override with `--architect-model claude-sonnet-4-6` to save tokens). The resulting `.forge/knowledge/architecture.md` is what the Planner reads on every subsequent run.
+
+Re-init is not supported in MVP: if `.forge/` already exists, `forge init` aborts with a pointer at the individual files to edit. The `--force` flag with `.bak` backups is on the Stage 9 roadmap.
+
+### Run a user story
+
+```bash
+cp .env.example .env           # then fill in ANTHROPIC_API_KEY
+forge plan "add a logout button to the settings screen"   # produce a Plan
+forge run  "add a logout button to the settings screen"   # full pipeline
+forge run  --resume <run_id>                              # resume a crashed run
+forge report <run_id>                                     # re-render the markdown report
+```
+
 ### Local LLM development
 
-For local LLM development, `docker-compose.yml` and `start_llm.sh` provide an Ollama-based setup (Qwen, Gemma, Llama) — useful for running the Executor and Verifier offline.
+For local LLM development, `docker-compose.yml` and `start_llm.sh` provide an Ollama-based setup (Qwen, Gemma, Llama) — useful for running the Executor and Verifier offline. Switch the `[models.executor]` provider in `.forge/config.toml` to `ollama` to use it.
 
 ## 💡 Philosophy
 

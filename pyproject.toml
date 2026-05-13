@@ -32,6 +32,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/forge"]
+# Non-.py files under src/forge (templates/, presets/, persona markdowns)
+# are picked up automatically by `packages` — hatch includes everything
+# under the listed directory by default. If we ever add a top-level
+# exclude that catches templates by accident, we'll need force-include
+# back here.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

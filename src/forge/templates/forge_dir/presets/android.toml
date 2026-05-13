@@ -1,0 +1,22 @@
+# Verification preset: Android (Gradle + detekt + AGP lint)
+#
+# Targets the typical multi-module Android setup. Tweak the variant
+# (Debug vs Release) to match your CI's expectations.
+
+[[verification.commands]]
+name = "detekt"
+command = "./gradlew detekt"
+stage = "verify_lint"
+timeout_seconds = 240
+
+[[verification.commands]]
+name = "android-lint"
+command = "./gradlew lintDebug"
+stage = "verify_lint"
+timeout_seconds = 600
+
+[[verification.commands]]
+name = "unit-tests"
+command = "./gradlew testDebugUnitTest"
+stage = "verify_test"
+timeout_seconds = 900

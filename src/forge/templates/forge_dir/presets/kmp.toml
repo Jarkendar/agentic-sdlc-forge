@@ -1,0 +1,22 @@
+# Verification preset: Kotlin Multiplatform (Gradle + detekt + allTests)
+#
+# `allTests` runs all platform-specific test tasks (JVM, JS, native).
+# Heavy — adjust timeout for your project size.
+
+[[verification.commands]]
+name = "detekt"
+command = "./gradlew detekt"
+stage = "verify_lint"
+timeout_seconds = 240
+
+[[verification.commands]]
+name = "compile-common"
+command = "./gradlew compileKotlinMetadata"
+stage = "verify_compile"
+timeout_seconds = 300
+
+[[verification.commands]]
+name = "all-tests"
+command = "./gradlew allTests"
+stage = "verify_test"
+timeout_seconds = 1200
